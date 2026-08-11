@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+    <meta name="theme-color" content="#123e56">
+    <meta name="robots" content="noindex,nofollow">
+    <title>PLC Remote Setup</title>
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="stylesheet" href="/assets/app.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">LOCAL SERVICE MODE</p>
+        <h1>PLC Remote</h1>
+      </div>
+      <div class="status-row" aria-label="Gateway status">
+        <span class="status <%= state_class(assigns.network.connection) %>">
+          Network: <%= h(connection_label(assigns.network.connection)) %>
+        </span>
+        <span class="status <%= state_class(assigns.tailscale.state) %>">
+          Tailscale: <%= h(state_label(assigns.tailscale.state)) %>
+        </span>
+        <%= if assigns.service.mode == :automatic do %>
+          <span class="status pending">Open setup Wi-Fi</span>
+        <% else %>
+          <span class="status ok">Protected service Wi-Fi</span>
+        <% end %>
+      </div>
+    </header>
+
+    <main>
+      <section class="intro">
+        <div>
+          <p class="eyebrow">COMMISSIONING</p>
+          <h2>Secure access to the machine network</h2>
+          <p>Settings are stored locally. The service portal closes automatically after inactivity.</p>
+        </div>
+        <dl class="facts">
+          <div><dt>Service SSID</dt><dd><%= h(assigns.service.ssid) %></dd></div>
+          <div><dt>Portal</dt><dd><%= h(assigns.service.address) %></dd></div>
+          <div><dt>Time remaining</dt><dd><%= h(remaining_label(assigns.service)) %></dd></div>
+        </dl>
+      </section>
+
+      <%= if assigns.service.mode == :automatic do %>
+        <div class="notice warning" role="status">
+          <strong>This first-boot setup WLAN is open.</strong> Configure both Ethernet roles and Tailscale now. It shuts down only after the gateway successfully joins the tailnet.
+        </div>
+      <% end %>
+
+      <%= if assigns.notice do %>
+        <div class="notice success" role="status"><%= h(assigns.notice) %></div>
+      <% end %>
+
+      <%= if map_size(assigns.errors) > 0 do %>
+        <div class="notice failure" role="alert">
+          <strong>Settings were not saved.</strong> Correct the highlighted fields.
+        </div>
+      <% end %>
+
+      <section class="connection-card">
+        <div>
+          <p class="eyebrow">REMOTE CONNECTION</p>
+          <h2>S7 TCP proxy</h2>
+        </div>
+        <%= if assigns.tailscale.tailnet_ipv4 do %>
+          <p>
+            From an authorized Tailscale client, connect to
+            <code><%= h(assigns.tailscale.tailnet_ipv4) %>:<%= h(assigns.tailscale.listen_port) %></code>.
+            PLC Remote forwards only that TCP service to
+            <code><%= h(assigns.tailscale.destination) %></code>.
+          </p>
+        <% else %>
+          <p>Enroll the gateway with a Tailscale auth key to obtain its tailnet address.</p>
+        <% end %>
+        <%= if assigns.tailscale.reason do %>
+          <p class="status-detail">Status detail: <%= h(assigns.tailscale.reason) %></p>
+        <% end %>
+        <%= if assigns.tailscale.retry_in_seconds do %>
+          <p class="status-detail">Reconnect attempt <%= h(assigns.tailscale.failure_count) %> in <%= h(assigns.tailscale.retry_in_seconds) %> seconds.</p>
+        <% end %>
+        <%= if assigns.recovery.last_action do %>
+          <p class="status-detail">Last recovery action: <%= h(assigns.recovery.last_action) %>; reboot budget used: <%= h(assigns.recovery.consecutive_reboots) %>.</p>
+        <% end %>
+        <p class="warning-text">
+          tailscale-rs is experimental. It provides a fixed userspace TCP proxy, not subnet routing,
+          PROFINET discovery, or direct access to the PLC IP.
+        </p>
+      </section>
+
+      <form method="post" action="/settings" class="settings-form" autocomplete="off">
+        <input type="hidden" name="_csrf_token" value="<%= h(assigns.csrf_token) %>">
+
+        <section class="card">
+          <div class="card-heading">
+            <span class="step">01</span>
+            <div><h2>Machine LAN</h2><p>Isolated 1000M port and PLC destination</p></div>
+          </div>
+          <div class="toggle-line">
+            <input type="hidden" name="machine_enabled" value="false">
+            <input id="machine_enabled" type="checkbox" name="machine_enabled" value="true" <%= checked(assigns.settings.machine.enabled) %>>
+            <label for="machine_enabled">Enable the machine interface</label>
+          </div>
+          <div class="form-grid two role-select">
+            <label>Physical machine port
+              <select name="machine_interface_hw_path">
+                <option value="">Select a detected Ethernet port</option>
+                <%= for option <- interface_options(assigns.network.interfaces, assigns.settings.machine.interface_hw_path) do %>
+                  <option value="<%= h(option.path) %>" <%= selected(assigns.settings.machine.interface_hw_path, option.path) %>><%= h(option.label) %></option>
+                <% end %>
+              </select>
+              <%= error(assigns.errors, "machine_interface_hw_path") %>
+              <small>Select the native, non-USB 1000M port on IPCBOX-CM5-A.</small>
+            </label>
+          </div>
+          <div class="form-grid three">
+            <label>Gateway address
+              <input name="machine_address" value="<%= h(assigns.settings.machine.address) %>" inputmode="decimal" required>
+              <%= error(assigns.errors, "machine_address") %>
+            </label>
+            <label>Prefix length
+              <input name="machine_prefix_length" type="number" min="1" max="30" value="<%= h(assigns.settings.machine.prefix_length) %>" required>
+              <%= error(assigns.errors, "machine_prefix_length") %>
+            </label>
+            <label>PLC address
+              <input name="plc_address" value="<%= h(assigns.settings.machine.plc_address) %>" inputmode="decimal" required>
+              <%= error(assigns.errors, "plc_address") %>
+            </label>
+          </div>
+          <p class="help">No gateway or DNS is installed on the machine interface.</p>
+        </section>
+
+        <section class="card">
+          <div class="card-heading">
+            <span class="step">02</span>
+            <div><h2>Internet uplink</h2><p>2500M Ethernet with optional Wi-Fi fallback</p></div>
+          </div>
+          <div class="form-grid two">
+            <label>Uplink policy
+              <select name="uplink_mode">
+                <option value="disabled" <%= selected(assigns.settings.uplink.mode, :disabled) %>>Offline — all uplinks disabled</option>
+                <option value="auto" <%= selected(assigns.settings.uplink.mode, :auto) %>>Automatic — Ethernet preferred</option>
+                <option value="ethernet" <%= selected(assigns.settings.uplink.mode, :ethernet) %>>Ethernet only</option>
+                <option value="wifi" <%= selected(assigns.settings.uplink.mode, :wifi) %>>Wi-Fi only</option>
+              </select>
+            </label>
+            <label>Wi-Fi regulatory domain
+              <input name="regulatory_domain" maxlength="2" value="<%= h(assigns.settings.uplink.regulatory_domain) %>" autocapitalize="characters" required>
+              <%= error(assigns.errors, "regulatory_domain") %>
+            </label>
+          </div>
+
+          <details open>
+            <summary>Ethernet addressing</summary>
+            <div class="form-grid two">
+              <label>Physical uplink port
+                <select name="ethernet_interface_hw_path">
+                  <option value="">Select a detected Ethernet port</option>
+                  <%= for option <- interface_options(assigns.network.interfaces, assigns.settings.uplink.ethernet.interface_hw_path) do %>
+                    <option value="<%= h(option.path) %>" <%= selected(assigns.settings.uplink.ethernet.interface_hw_path, option.path) %>><%= h(option.label) %></option>
+                  <% end %>
+                </select>
+                <%= error(assigns.errors, "ethernet_interface_hw_path") %>
+                <small>Select the USB 2500M / r8152 or ax88179 port on IPCBOX-CM5-A.</small>
+              </label>
+              <label>Method
+                <select name="ethernet_method">
+                  <option value="dhcp" <%= selected(assigns.settings.uplink.ethernet.method, :dhcp) %>>DHCP</option>
+                  <option value="static" <%= selected(assigns.settings.uplink.ethernet.method, :static) %>>Static</option>
+                </select>
+              </label>
+              <label>Address<input name="ethernet_address" value="<%= h(assigns.settings.uplink.ethernet.address) %>"><%= error(assigns.errors, "ethernet_address") %></label>
+              <label>Prefix<input name="ethernet_prefix_length" type="number" min="1" max="30" value="<%= h(assigns.settings.uplink.ethernet.prefix_length) %>"><%= error(assigns.errors, "ethernet_prefix_length") %></label>
+              <label>Gateway<input name="ethernet_gateway" value="<%= h(assigns.settings.uplink.ethernet.gateway) %>"><%= error(assigns.errors, "ethernet_gateway") %></label>
+              <label>DNS server<input name="ethernet_name_server" value="<%= h(assigns.settings.uplink.ethernet.name_server) %>"><%= error(assigns.errors, "ethernet_name_server") %></label>
+            </div>
+          </details>
+
+          <details>
+            <summary>Detected Ethernet diagnostics</summary>
+            <div class="interface-list">
+              <%= for interface <- ethernet_interfaces(assigns.network.interfaces) do %>
+                <article>
+                  <strong><%= h(interface_label(interface)) %></strong>
+                  <code><%= h(interface.hw_path) %></code>
+                  <small>MAC <%= h(interface.mac_address || "unavailable") %></small>
+                </article>
+              <% end %>
+              <%= if ethernet_interfaces(assigns.network.interfaces) == [] do %>
+                <p class="help">No Ethernet interfaces are currently detected. Refresh after the port drivers finish loading.</p>
+              <% end %>
+            </div>
+            <%= if assigns.network.last_error do %>
+              <p class="field-error">Network status: <%= h(assigns.network.last_error) %></p>
+            <% end %>
+          </details>
+
+          <details>
+            <summary>Wi-Fi uplink</summary>
+            <div class="form-grid two">
+              <label>SSID<input name="wifi_ssid" value="<%= h(assigns.settings.uplink.wifi.ssid) %>" maxlength="32"><%= error(assigns.errors, "wifi_ssid") %></label>
+              <label>Password<input name="wifi_psk" type="password" placeholder="Leave blank to keep current password" autocomplete="new-password"><%= error(assigns.errors, "wifi_psk") %></label>
+              <label>Method
+                <select name="wifi_method">
+                  <option value="dhcp" <%= selected(assigns.settings.uplink.wifi.method, :dhcp) %>>DHCP</option>
+                  <option value="static" <%= selected(assigns.settings.uplink.wifi.method, :static) %>>Static</option>
+                </select>
+              </label>
+              <span></span>
+              <label>Address<input name="wifi_address" value="<%= h(assigns.settings.uplink.wifi.address) %>"><%= error(assigns.errors, "wifi_address") %></label>
+              <label>Prefix<input name="wifi_prefix_length" type="number" min="1" max="30" value="<%= h(assigns.settings.uplink.wifi.prefix_length) %>"><%= error(assigns.errors, "wifi_prefix_length") %></label>
+              <label>Gateway<input name="wifi_gateway" value="<%= h(assigns.settings.uplink.wifi.gateway) %>"><%= error(assigns.errors, "wifi_gateway") %></label>
+              <label>DNS server<input name="wifi_name_server" value="<%= h(assigns.settings.uplink.wifi.name_server) %>"><%= error(assigns.errors, "wifi_name_server") %></label>
+            </div>
+          </details>
+        </section>
+
+        <section class="card">
+          <div class="card-heading">
+            <span class="step">03</span>
+            <div><h2>Tailscale access</h2><p>One explicitly configured TCP service</p></div>
+          </div>
+          <div class="toggle-line">
+            <input type="hidden" name="tailscale_enabled" value="false">
+            <input id="tailscale_enabled" type="checkbox" name="tailscale_enabled" value="true" <%= checked(assigns.settings.tailscale.enabled) %>>
+            <label for="tailscale_enabled">Enable the Tailscale PLC proxy</label>
+            <%= error(assigns.errors, "tailscale_enabled") %>
+          </div>
+          <div class="form-grid two">
+            <label>Tailnet hostname<input name="tailscale_hostname" value="<%= h(assigns.settings.tailscale.hostname) %>" required><%= error(assigns.errors, "tailscale_hostname") %></label>
+            <label>Requested tags<input name="tailscale_tags" value="<%= h(Enum.join(assigns.settings.tailscale.tags, ", ")) %>" placeholder="tag:plc-gateway"><%= error(assigns.errors, "tailscale_tags") %></label>
+            <label>One-time auth key<input name="tailscale_auth_key" type="password" placeholder="Not stored after submission" autocomplete="off"><small>Entering a key enables Tailscale automatically.</small></label>
+            <span></span>
+            <label>Tailnet listen port<input name="tailscale_listen_port" type="number" min="1" max="65535" value="<%= h(assigns.settings.tailscale.listen_port) %>" required><%= error(assigns.errors, "tailscale_listen_port") %></label>
+            <label>PLC destination port<input name="plc_destination_port" type="number" min="1" max="65535" value="<%= h(assigns.settings.tailscale.destination_port) %>" required><%= error(assigns.errors, "plc_destination_port") %></label>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-heading">
+            <span class="step">04</span>
+            <div><h2>Service mode</h2><p>Physical access and captive portal controls</p></div>
+          </div>
+          <%= if assigns.service.gpio_error do %>
+            <div class="notice failure">Service GPIO unavailable: <%= h(assigns.service.gpio_error) %></div>
+          <% end %>
+          <div class="form-grid two">
+            <label>GPIO specification<input name="service_gpio_spec" value="<%= h(assigns.settings.service.gpio_spec) %>" required><%= error(assigns.errors, "service_gpio_spec") %><small>IPCBOX-CM5-A DI1 uses the CM5 line label GPIO23.</small></label>
+            <label>Active level
+              <select name="service_active_level">
+                <option value="0" <%= selected(assigns.settings.service.active_level, 0) %>>Low / 0</option>
+                <option value="1" <%= selected(assigns.settings.service.active_level, 1) %>>High / 1</option>
+              </select>
+              <%= error(assigns.errors, "service_active_level") %>
+            </label>
+            <label>Hold time (seconds)<input name="service_hold_seconds" type="number" min="0" max="30" value="<%= h(div(assigns.settings.service.hold_ms, 1000)) %>" required><%= error(assigns.errors, "service_hold_seconds") %></label>
+            <label>Timeout (minutes)<input name="service_timeout_minutes" type="number" min="1" max="120" value="<%= h(div(assigns.settings.service.timeout_ms, 60000)) %>" required><%= error(assigns.errors, "service_timeout_minutes") %></label>
+            <label>SSID prefix<input name="service_ssid_prefix" maxlength="20" value="<%= h(assigns.settings.service.ssid_prefix) %>" required><%= error(assigns.errors, "service_ssid_prefix") %></label>
+            <label>New recovery Wi-Fi password<input name="service_psk" type="password" minlength="8" maxlength="63" placeholder="Leave blank to keep current password" autocomplete="new-password"><%= error(assigns.errors, "service_psk") %></label>
+          </div>
+
+          <details>
+            <summary>Automatic recovery escape hatch</summary>
+            <div class="toggle-line">
+              <input type="hidden" name="recovery_auto_reboot" value="false">
+              <input id="recovery_auto_reboot" type="checkbox" name="recovery_auto_reboot" value="true" <%= checked(assigns.settings.recovery.auto_reboot) %>>
+              <label for="recovery_auto_reboot">Allow bounded reboot recovery</label>
+            </div>
+            <div class="form-grid two">
+              <label>Reboot after offline minutes
+                <input name="recovery_reboot_after_minutes" type="number" min="15" max="1440" value="<%= h(div(assigns.settings.recovery.reboot_after_ms, 60000)) %>" required>
+                <%= error(assigns.errors, "recovery_reboot_after_minutes") %>
+              </label>
+              <label>Maximum consecutive recovery reboots
+                <input name="recovery_max_consecutive_reboots" type="number" min="0" max="5" value="<%= h(assigns.settings.recovery.max_consecutive_reboots) %>" required>
+                <%= error(assigns.errors, "recovery_max_consecutive_reboots") %>
+              </label>
+            </div>
+            <p class="help">The budget resets only after Tailscale remains stable. Unvalidated firmware and active service mode are never rebooted by this policy.</p>
+          </details>
+        </section>
+
+        <div class="actions">
+          <button type="submit" class="primary">Validate and apply settings</button>
+        </div>
+      </form>
+
+      <%= if assigns.service.mode != :automatic do %>
+        <form method="post" action="/service/exit" class="exit-form">
+          <input type="hidden" name="_csrf_token" value="<%= h(assigns.csrf_token) %>">
+          <button type="submit" class="secondary">Exit service mode</button>
+        </form>
+      <% end %>
+    </main>
+
+    <footer>PLC Remote · local commissioning interface</footer>
+    <script src="/assets/app.js" defer></script>
+  </body>
+</html>
