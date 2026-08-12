@@ -22,7 +22,8 @@ returned separately from settings and remain transient.
 | `PlcRemote.Adapters.Target.Network` | Serialized VintageNet configuration and diagnostics |
 | `PlcRemote.Adapters.Host.Network` | Deterministic host hardware model |
 | `PlcRemote.Integration` | x86-only serial test commands for real Nerves/QEMU boundaries |
-| `integration/qemu/run.sh` | fwup disk, QEMU topology, console assertions, and QMP link control |
+| `integration/qemu/run.sh` | deterministic fwup disk, QEMU topology, console assertions, and QMP link control |
+| `integration/qemu/run-tailnet.sh` | protected live enrollment, tailscaled interoperability, PLC proxy, and identity persistence |
 
 Wi-Fi AP configuration is built by `Network` and invoked only through
 `ServiceMode.Platform`. No application module scans or configures Wi-Fi station

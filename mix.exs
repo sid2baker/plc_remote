@@ -116,6 +116,7 @@ defmodule PlcRemote.MixProject do
       "ci.x86": ["cmd scripts/ci-x86.sh build"],
       "ci.qemu": ["cmd integration/qemu/run.sh"],
       "ci.integration": ["cmd scripts/ci-integration.sh"],
+      "ci.tailnet": ["cmd scripts/ci-tailnet.sh"],
       compile: ["deps.patch", "compile"],
       firmware: ["deps.patch", "firmware"],
       ci: [
@@ -128,7 +129,8 @@ defmodule PlcRemote.MixProject do
         "dialyzer",
         "ex_dna --max-clones 0",
         "reach.check --arch --smells",
-        "cmd scripts/ci-integration.sh"
+        "cmd scripts/ci-integration.sh",
+        "cmd env PLC_REMOTE_TAILNET_SKIP_BUILD=1 scripts/ci-tailnet-invalid.sh"
       ]
     ]
   end

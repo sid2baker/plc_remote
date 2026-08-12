@@ -6,6 +6,7 @@ defmodule PlcRemote.Integration do
   @plc_address "192.168.10.100"
   @plc_port 10_102
   @nif_smoke_path "/data/plc_remote/integration/nif-smoke.json"
+  @tailnet_identity_path "/data/plc_remote/integration/tailnet-identity.json"
 
   @spec health() :: map()
   def health do
@@ -23,8 +24,8 @@ defmodule PlcRemote.Integration do
     PlcRemote.NetworkManager.status().interfaces
   end
 
-  @spec provision_ethernet_roles() :: {:ok, map()} | {:error, term()}
-  def provision_ethernet_roles do
+  @spec provision_ethernet_roles(:inet.port_number()) :: {:ok, map()} | {:error, term()}
+  def provision_ethernet_roles(destination_port \\ 102) do
     with {:ok, wan} <- interface_by_mac(@wan_mac),
          {:ok, plc} <- interface_by_mac(@plc_mac),
          {:ok, settings} <-
@@ -37,6 +38,7 @@ defmodule PlcRemote.Integration do
              "machine_address" => "192.168.10.1",
              "machine_prefix_length" => "24",
              "plc_address" => @plc_address,
+             "plc_destination_port" => Integer.to_string(destination_port),
              "recovery_auto_reboot" => "false"
            }),
          :ok <- PlcRemote.NetworkManager.reapply() do
@@ -73,6 +75,113 @@ defmodule PlcRemote.Integration do
       end,
       timeout_ms
     )
+  end
+
+  @spec enroll_invalid_tailnet() :: {:ok, map()} | {:error, term()}
+  def enroll_invalid_tailnet do
+    path = "/tmp/plc-remote-invalid-enrollment.json"
+
+    with {:ok, encoded} <-
+           Jason.encode(%{
+             "auth_key" => "tskey-auth-invalid-plc-remote-ci",
+             "hostname" => "plc-remote-invalid-ci",
+             "tags" => []
+           }),
+         :ok <- File.write(path, encoded, [:binary]) do
+      enroll_tailnet(path)
+    end
+  end
+
+  @spec enroll_tailnet(Path.t()) :: {:ok, map()} | {:error, term()}
+  def enroll_tailnet(payload_path) do
+    with :ok <- File.chmod(payload_path, 0o600),
+         {:ok, encoded} <- File.read(payload_path),
+         :ok <- File.rm(payload_path),
+         {:ok, enrollment} <- decode_enrollment(encoded),
+         {:ok, settings} <-
+           PlcRemote.Configuration.update(%{
+             "tailscale_auth_key" => enrollment.auth_key,
+             "tailscale_enabled" => "true",
+             "tailscale_hostname" => enrollment.hostname,
+             "tailscale_tags" => Enum.join(enrollment.tags, ",")
+           }) do
+      {:ok,
+       %{
+         auth_payload_removed: not File.exists?(payload_path),
+         tailscale: settings.tailscale
+       }}
+    end
+  end
+
+  @spec await_tailnet(non_neg_integer()) :: {:ok, map()} | {:error, term()}
+  def await_tailnet(timeout_ms \\ 180_000) do
+    await(
+      fn ->
+        status = PlcRemote.TailscaleManager.status()
+
+        if status.state == :connected do
+          with {:ok, identity} <- tailnet_identity() do
+            {:ok, %{identity: identity, status: status}}
+          else
+            _error -> :retry
+          end
+        else
+          :retry
+        end
+      end,
+      timeout_ms
+    )
+  end
+
+  @spec await_tailnet_failure(non_neg_integer()) :: {:ok, map()} | {:error, term()}
+  def await_tailnet_failure(timeout_ms \\ 90_000) do
+    await(
+      fn ->
+        status = PlcRemote.TailscaleManager.status()
+        manager = :sys.get_state(PlcRemote.TailscaleManager)
+
+        if status.state == :error and is_nil(status.tailnet_ipv4) and is_nil(manager.listener) do
+          {:ok,
+           %{
+             listener_unavailable: true,
+             state: :error,
+             tailnet_ipv4: nil
+           }}
+        else
+          :retry
+        end
+      end,
+      timeout_ms
+    )
+  end
+
+  @spec record_tailnet_identity() :: {:ok, map()} | {:error, term()}
+  def record_tailnet_identity do
+    with {:ok, identity} <- tailnet_identity(),
+         true <- is_binary(identity.stable_id),
+         :ok <- File.mkdir_p(Path.dirname(@tailnet_identity_path)),
+         {:ok, encoded} <- Jason.encode(identity),
+         :ok <- File.write(@tailnet_identity_path, encoded, [:binary, :sync]),
+         :ok <- File.chmod(@tailnet_identity_path, 0o600) do
+      {:ok, %{identity: identity, identity_recorded: true}}
+    else
+      false -> {:error, :tailnet_identity_unavailable}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  @spec verify_tailnet_identity() :: {:ok, map()} | {:error, term()}
+  def verify_tailnet_identity do
+    with {:ok, encoded} <- File.read(@tailnet_identity_path),
+         {:ok, expected} <- Jason.decode(encoded),
+         {:ok, current} <- tailnet_identity(),
+         true <- is_binary(current.stable_id),
+         true <- expected["stable_id"] == current.stable_id do
+      {:ok, %{identity: current, identity_persisted: true}}
+    else
+      false -> {:error, :tailnet_identity_changed}
+      {:error, _reason} = error -> error
+    end
   end
 
   @spec schedule_poweroff() :: :ok
@@ -136,6 +245,45 @@ defmodule PlcRemote.Integration do
   @spec result(term()) :: String.t()
   def result(value),
     do: "PLC_REMOTE_CI:" <> inspect(value, limit: :infinity, printable_limit: :infinity)
+
+  defp decode_enrollment(encoded) do
+    case Jason.decode(encoded) do
+      {:ok, %{"auth_key" => auth_key, "hostname" => hostname, "tags" => tags}}
+      when is_binary(auth_key) and is_binary(hostname) and is_list(tags) ->
+        auth_key = String.trim(auth_key)
+
+        if auth_key != "" and Enum.all?(tags, &is_binary/1) do
+          {:ok, %{auth_key: auth_key, hostname: hostname, tags: tags}}
+        else
+          {:error, :invalid_enrollment_payload}
+        end
+
+      _other ->
+        {:error, :invalid_enrollment_payload}
+    end
+  end
+
+  defp tailnet_identity do
+    case :sys.get_state(PlcRemote.TailscaleManager) do
+      %{device: nil} ->
+        {:error, :tailnet_device_unavailable}
+
+      %{device: device} ->
+        with {:ok, node} <- Tailscale.self_node(device) do
+          {:ok,
+           %{
+             hostname: node.hostname,
+             stable_id: node.stable_id,
+             tailnet_addresses: Enum.map(node.tailnet_addresses, &format_ip/1)
+           }}
+        end
+    end
+  catch
+    :exit, reason -> {:error, {:tailnet_manager_unavailable, reason}}
+  end
+
+  defp format_ip(address) when is_tuple(address), do: address |> :inet.ntoa() |> to_string()
+  defp format_ip(address), do: to_string(address)
 
   defp await(check, timeout_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms

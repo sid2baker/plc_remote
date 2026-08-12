@@ -168,7 +168,13 @@ The x86 build disables Rust's static musl CRT for the shared NIF and forces
 AWS-LC C objects to be position-independent.
 
 This lane validates firmware packaging, VintageNet, `/data` persistence, stable
-role resolution, supervision, and native loading. Protected live-tailnet tests
-and an isolated PLC protocol fixture are later layers. Physical CM4/CM5 tests
-remain authoritative for carrier drivers, Wi-Fi AP, GPIO, and electrical
-power-loss behavior.
+role resolution, supervision, and native loading.
+
+The protected live-tailnet variant transfers a one-use credential over SFTP to
+guest `/tmp`; firmware reads and deletes it before calling the normal
+configuration path. Enrollment therefore exercises the real manager/adapter
+boundary without exposing the key through serial history, SSH commands,
+persistent settings, firmware artifacts, or process arguments. A mature
+`tailscaled` CI peer tests the deployed TCP direction through the fixed PLC
+proxy. Physical CM4/CM5 tests remain authoritative for carrier drivers, Wi-Fi
+AP, GPIO, and electrical power-loss behavior.

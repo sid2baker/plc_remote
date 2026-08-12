@@ -33,9 +33,10 @@ the x86 integration firmware. QMP controls link state without requiring a guest
 shell.
 
 The current deterministic gate validates boot, OTP ownership, role settings,
-WAN DHCP Internet, dual Ethernet isolation, observed QMP link cycling, and native
-execution of `Tailscale.Native.load_key_file/1` under Nerves musl. It consumes no
-Tailscale credential.
+WAN DHCP Internet, dual Ethernet isolation, observed QMP link cycling, invalid
+auth-key fail-closed behavior, and native execution of
+`Tailscale.Native.load_key_file/1` under Nerves musl. It consumes no Tailscale
+credential.
 
 An optional unprivileged fixture uses a separate, restricted QEMU user network
 and `guestfwd` to verify a `SO_BINDTODEVICE` TCP echo from the firmware:
@@ -45,7 +46,27 @@ mix ci.integration
 ```
 
 The fixture is visible to the PLC NIC as `192.168.10.100:10102`, has no route to
-the WAN, and forwards only that TCP endpoint to a loopback host process. GitHub Actions runs this fixture-enabled lane without secrets and retains the
-QEMU logs for diagnosis. Future protected stages will add disposable Tailscale
-enrollment, identity reuse after reboot, live fixed TCP proxy traffic, and an S7
-protocol fixture.
+the WAN, and forwards only that TCP endpoint to a loopback host process. GitHub
+Actions runs this fixture-enabled lane without secrets and retains the QEMU logs
+for diagnosis.
+
+## Protected live-tailnet lane
+
+`mix ci.tailnet` is intentionally not part of `mix ci`. It requires:
+
+- `TS_OAUTH_CLIENT_ID` and `TS_OAUTH_SECRET` with `auth_keys` scope;
+- `PLC_REMOTE_TAILNET_TAGS`, such as `tag:plc-remote-ci`;
+- a mature `tailscaled` peer in the same restricted tailnet;
+- tailnet policy permitting that peer to reach the gateway tag on TCP/102.
+
+The harness requests a one-use, 15-minute, ephemeral auth key. Its payload is
+written mode `0600`, uploaded over SFTP to guest `/tmp`, consumed and deleted
+before enrollment, and removed from the host immediately. It never appears in
+firmware, QEMU arguments, SSH commands, persistent settings, or logs.
+
+The protected lane verifies invalid-key fail-closed behavior, live
+`tailscale-rs` enrollment, DERP interoperability with `tailscaled`, bidirectional
+TCP proxy traffic to the isolated PLC fixture, and reuse of the same tailnet
+identity and address after a clean reboot. The API key is revoked in teardown;
+the ephemeral gateway identity expires automatically. An S7 protocol fixture
+remains future work.

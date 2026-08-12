@@ -212,11 +212,14 @@ mix ci.integration
 
 The default `mix ci` finishes by running the deterministic QEMU lane. It boots
 the real x86_64 Nerves firmware with two fixed virtio Ethernet devices. It verifies OTP supervision, stable role paths,
-DHCP Internet, QMP link control, persistent settings, and real loading of the
-musl `tailscale-rs` Rustler NIF. It does not require a Tailscale credential.
+DHCP Internet, QMP link control, persistent settings, invalid-key fail-closed
+behavior, and real loading of the musl `tailscale-rs` Rustler NIF. It does not
+require a Tailscale credential.
 GitHub Actions runs the same secret-free lane under QEMU TCG on pushes and pull
 requests and retains QEMU logs and the x86 firmware as short-lived artifacts.
-Live tailnet scenarios remain a separate protected CI stage.
+Live enrollment and fixed-proxy interoperability run only from the manual
+`tailnet-integration` GitHub environment, which must be configured with required
+reviewers, using a restricted CI tailnet tag. See `docs/operations.md` for credential and ACL requirements.
 
 See [`docs/architecture.md`](docs/architecture.md),
 [`docs/operations.md`](docs/operations.md), and

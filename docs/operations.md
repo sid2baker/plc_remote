@@ -171,13 +171,27 @@ one QEMU Internet NIC and one isolated PLC NIC, and checks:
 - the WAN receives QEMU DHCP Internet while the PLC side remains isolated;
 - settings and distinct Ethernet roles apply through real VintageNet;
 - `Tailscale.Native.load_key_file/1` executes successfully inside Nerves;
-- QMP can drop and restore the PLC link.
+- QMP can drop and restore the PLC link;
+- an invalid auth key reaches no connected state or listener.
 
 Artifacts and serial logs are left in `_build/qemu_integration` on failure.
 These tests use no Tailscale secret. GitHub Actions runs the same lane with
 QEMU TCG on pushes and pull requests, uploads emulator logs even after failure,
 and retains successful x86 firmware temporarily. `mix ci.integration` builds
 once and then runs QEMU with the optional isolated, interface-bound TCP echo at
-`192.168.10.100:10102` through a restricted QEMU user network. Real enrollment, identity reuse, live
-tailnet proxy traffic, and S7 simulation belong in subsequent protected CI
-stages.
+`192.168.10.100:10102` through a restricted QEMU user network.
+
+The manual `Protected tailnet integration` workflow uses the GitHub environment
+`tailnet-integration`. Configure environment secrets `TS_OAUTH_CLIENT_ID` and
+`TS_OAUTH_SECRET`, plus variable `PLC_REMOTE_TAILNET_TAGS`. Restrict the OAuth
+client to `auth_keys` scope and only the dedicated CI tag. Tailnet policy must
+permit the CI peer tag to reach the gateway CI tag on TCP/102 and nothing else.
+Configure required reviewers on the environment before storing credentials.
+
+That workflow always checks out trusted `main`, mints a one-use 15-minute
+credential, transfers it to guest `/tmp` over SFTP, and deletes it before
+`tailscale-rs` connects. It verifies invalid-key fail-closed behavior, real
+`tailscale-rs` to mature `tailscaled` interoperability, TCP echo through the
+fixed PLC proxy, and identity/address persistence after reboot. Teardown revokes
+the auth key; the gateway is ephemeral and expires automatically. S7 simulation
+remains a subsequent protected stage.
