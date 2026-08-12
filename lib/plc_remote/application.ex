@@ -7,11 +7,13 @@ defmodule PlcRemote.Application do
   def start(_type, _args) do
     children = [
       PlcRemote.Configuration,
-      PlcRemote.NetworkManager,
-      PlcRemote.TailscaleSupervisor,
-      PlcRemote.ServiceMode.Supervisor,
-      PlcRemote.RecoveryManager,
-      PlcRemote.FirmwareValidator
+      {Phoenix.PubSub, name: PlcRemote.PubSub},
+      PlcRemote.Health.Reporter,
+      PlcRemote.Network.Runtime,
+      PlcRemote.Tailscale.Supervisor,
+      PlcRemote.Service.Supervisor,
+      PlcRemote.Recovery.Runtime,
+      PlcRemote.Firmware.Runtime
     ]
 
     Supervisor.start_link(children,

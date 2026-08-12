@@ -1,13 +1,13 @@
 defmodule PlcRemote.TcpProxyTest do
   use ExUnit.Case, async: true
 
-  alias PlcRemote.TcpProxy
+  alias PlcRemote.Proxy.TcpProxy
 
   defmodule TailscaleAdapter do
     @behaviour PlcRemote.Adapters.Tailscale
 
     @impl true
-    def connect(_settings, _auth_key), do: {:error, :unused}
+    def connect(_settings, _auth_key, _opts), do: {:error, :unused}
 
     @impl true
     def accept(_listener), do: {:error, :unused}

@@ -10,12 +10,12 @@ defmodule PlcRemoteWeb.CaptiveController do
 
   @spec exit_service(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def exit_service(conn, _params) do
-    if PlcRemote.ServiceMode.status().mode == :automatic do
+    if PlcRemote.Service.status().lifecycle == :automatic do
       send_resp(conn, 409, "First-boot setup must pass verification before the AP can close.")
     else
       Task.start(fn ->
         Process.sleep(750)
-        PlcRemote.ServiceMode.deactivate()
+        PlcRemote.Service.deactivate()
       end)
 
       send_resp(conn, 200, closing_page())

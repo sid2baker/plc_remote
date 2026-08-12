@@ -7,15 +7,9 @@ defmodule PlcRemote.Configuration do
 
   require Logger
 
+  alias PlcRemote.Events.ConfigurationChanged
   alias PlcRemote.Settings
   alias PlcRemote.Settings.Store
-
-  @subscribers [
-    PlcRemote.NetworkManager,
-    PlcRemote.TailscaleManager,
-    PlcRemote.ServiceMode,
-    PlcRemote.RecoveryManager
-  ]
 
   @doc false
   @spec start_link(keyword()) :: GenServer.on_start()
@@ -24,8 +18,16 @@ defmodule PlcRemote.Configuration do
   end
 
   @doc "Returns the current validated settings."
-  @spec get() :: Settings.t()
-  def get, do: GenServer.call(__MODULE__, :get)
+  @spec current() :: Settings.t()
+  def current, do: GenServer.call(__MODULE__, :current)
+
+  @doc false
+  @deprecated "Use current/0"
+  def get, do: current()
+
+  @doc "Returns the monotonically increasing in-memory configuration revision."
+  @spec revision() :: non_neg_integer()
+  def revision, do: GenServer.call(__MODULE__, :revision)
 
   @doc "Validates, persists, and applies web-form settings."
   @spec update(map()) :: {:ok, Settings.t()} | {:error, Settings.errors() | term()}
@@ -57,7 +59,7 @@ defmodule PlcRemote.Configuration do
   @doc "Returns the local service access-point credentials for manufacturing."
   @spec service_credentials() :: %{address: String.t(), psk: String.t(), ssid_prefix: String.t()}
   def service_credentials do
-    settings = get()
+    settings = current()
 
     %{
       address: settings.service.address,
@@ -81,7 +83,8 @@ defmodule PlcRemote.Configuration do
          path: path,
          rollback_path: rollback_path,
          service_snapshot: nil,
-         settings: settings
+         settings: settings,
+         revision: 0
        }}
     else
       {:error, reason} -> {:stop, {:settings_unavailable, reason}}
@@ -89,7 +92,8 @@ defmodule PlcRemote.Configuration do
   end
 
   @impl GenServer
-  def handle_call(:get, _from, state), do: {:reply, state.settings, state}
+  def handle_call(:current, _from, state), do: {:reply, state.settings, state}
+  def handle_call(:revision, _from, state), do: {:reply, state.revision, state}
 
   def handle_call(:begin_service_transaction, _from, state) do
     case begin_transaction(state) do
@@ -114,8 +118,8 @@ defmodule PlcRemote.Configuration do
 
     with :ok <- Store.save(state.path, snapshot),
          :ok <- Store.remove(state.rollback_path) do
-      notify_subscribers(snapshot, nil)
-      {:reply, :ok, %{state | settings: snapshot, service_snapshot: nil}}
+      state = publish_configuration(%{state | settings: snapshot, service_snapshot: nil})
+      {:reply, :ok, state}
     else
       {:error, reason} = error ->
         Logger.error("Unable to roll back onsite settings: #{inspect(reason)}")
@@ -133,8 +137,8 @@ defmodule PlcRemote.Configuration do
     case Store.save(state.path, settings) do
       :ok ->
         Logger.info("Gateway commissioning marker persisted after final verification")
-        notify_subscribers(settings, nil)
-        {:reply, :ok, %{state | settings: settings}}
+        state = publish_configuration(%{state | settings: settings})
+        {:reply, :ok, state}
 
       {:error, reason} = error ->
         Logger.error("Unable to persist commissioning state: #{inspect(reason)}")
@@ -145,8 +149,8 @@ defmodule PlcRemote.Configuration do
   def handle_call({:restore, settings}, _from, state) do
     with :ok <- Store.save(state.path, settings),
          :ok <- Store.remove(state.rollback_path) do
-      notify_subscribers(settings, nil)
-      {:reply, :ok, %{state | settings: settings, service_snapshot: nil}}
+      state = publish_configuration(%{state | settings: settings, service_snapshot: nil})
+      {:reply, :ok, state}
     else
       {:error, reason} = error ->
         Logger.error("Unable to restore the previous gateway settings: #{inspect(reason)}")
@@ -155,11 +159,10 @@ defmodule PlcRemote.Configuration do
   end
 
   def handle_call({:update, params}, _from, state) do
-    with {:ok, state} <- maybe_begin_service_transaction(state),
-         {:ok, settings, auth_key} <- Settings.update(state.settings, params),
+    with {:ok, settings} <- Settings.update(state.settings, params),
          :ok <- Store.save(state.path, settings) do
-      notify_subscribers(settings, auth_key)
-      {:reply, {:ok, settings}, %{state | settings: settings}}
+      state = publish_configuration(%{state | settings: settings})
+      {:reply, {:ok, settings}, state}
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
@@ -211,10 +214,6 @@ defmodule PlcRemote.Configuration do
   defp persist_new_settings(_path, _settings, :existing), do: :ok
   defp persist_new_settings(path, settings, :new), do: Store.save(path, settings)
 
-  defp maybe_begin_service_transaction(state) do
-    if recovery_service_active?(), do: begin_transaction(state), else: {:ok, state}
-  end
-
   defp begin_transaction(%{service_snapshot: snapshot} = state) when not is_nil(snapshot),
     do: {:ok, state}
 
@@ -225,21 +224,13 @@ defmodule PlcRemote.Configuration do
     end
   end
 
-  defp recovery_service_active? do
-    case Process.whereis(PlcRemote.ServiceMode) do
-      nil -> false
-      _pid -> PlcRemote.ServiceMode.status().mode == :recovery
-    end
-  catch
-    :exit, _reason -> false
-  end
+  defp publish_configuration(state) do
+    revision = state.revision + 1
 
-  defp notify_subscribers(settings, auth_key) do
-    Enum.each(@subscribers, fn name ->
-      if pid = Process.whereis(name) do
-        send(pid, {:settings_updated, settings, auth_key})
-      end
-    end)
+    :ok =
+      PlcRemote.Events.publish(%ConfigurationChanged{revision: revision})
+
+    %{state | revision: revision}
   end
 
   defp settings_path do

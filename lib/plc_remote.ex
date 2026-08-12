@@ -8,5 +8,5 @@ defmodule PlcRemote do
 
   @doc "Returns current interface names for the configured network roles."
   @spec network_roles() :: %{PlcRemote.Network.role() => PlcRemote.Network.ifname() | nil}
-  def network_roles, do: PlcRemote.NetworkManager.status().roles
+  def network_roles, do: PlcRemote.Network.status().roles
 end

@@ -1,14 +1,16 @@
 defmodule PlcRemote.SupervisionTest do
   use ExUnit.Case, async: false
 
-  test "root starts recovery and firmware validation after operational boundaries" do
-    assert is_pid(Process.whereis(PlcRemote.RecoveryManager))
-    assert is_pid(Process.whereis(PlcRemote.FirmwareValidator))
+  test "root starts Health and lifecycle runtimes after Configuration" do
+    assert is_pid(Process.whereis(PlcRemote.Health.Reporter))
+    assert is_pid(Process.whereis(PlcRemote.Network.Runtime))
+    assert is_pid(Process.whereis(PlcRemote.Recovery.Runtime))
+    assert is_pid(Process.whereis(PlcRemote.Firmware.Runtime))
   end
 
-  test "Tailscale boundary restarts the manager and all task supervisors together" do
+  test "Tailscale boundary restarts runtime and task supervisors together" do
     previous = tailscale_processes()
-    Process.exit(previous.manager, :kill)
+    Process.exit(previous.runtime, :kill)
 
     assert eventually(fn ->
              current = tailscale_processes()
@@ -19,56 +21,51 @@ defmodule PlcRemote.SupervisionTest do
            end)
   end
 
-  test "service boundary restores an active onsite AP after a manager crash" do
-    original = PlcRemote.Configuration.get()
+  test "service boundary restores protected AP intent after runtime crash" do
+    original = PlcRemote.Configuration.current()
 
     on_exit(fn ->
-      if service_active?(), do: PlcRemote.ServiceMode.deactivate()
+      if PlcRemote.Service.active?(), do: PlcRemote.Service.deactivate()
       PlcRemote.Configuration.restore(original)
     end)
 
     :ok = PlcRemote.Configuration.restore(%{original | commissioned: true})
-    assert :ok = PlcRemote.ServiceMode.activate()
+    assert :ok = PlcRemote.Service.activate()
 
-    previous_service = Process.whereis(PlcRemote.ServiceMode)
-    previous_web = Process.whereis(PlcRemote.ServiceMode.WebSupervisor)
-    previous_runtime = Process.whereis(PlcRemote.ServiceMode.WebRuntimeSupervisor)
+    previous_service = Process.whereis(PlcRemote.Service.Runtime)
+    previous_web = Process.whereis(PlcRemote.Service.WebSupervisor)
+    previous_runtime = Process.whereis(PlcRemote.Service.WebRuntimeSupervisor)
     Process.exit(previous_service, :kill)
 
     assert eventually(fn ->
-             service = Process.whereis(PlcRemote.ServiceMode)
-             web = Process.whereis(PlcRemote.ServiceMode.WebSupervisor)
-             runtime = Process.whereis(PlcRemote.ServiceMode.WebRuntimeSupervisor)
-             status = if is_pid(service), do: service_status(), else: %{}
+             service = Process.whereis(PlcRemote.Service.Runtime)
+             web = Process.whereis(PlcRemote.Service.WebSupervisor)
+             runtime = Process.whereis(PlcRemote.Service.WebRuntimeSupervisor)
+
+             status =
+               if is_pid(service) do
+                 try do
+                   PlcRemote.Service.status()
+                 catch
+                   :exit, _reason -> nil
+                 end
+               end
 
              is_pid(service) and is_pid(web) and is_pid(runtime) and service != previous_service and
-               web != previous_web and runtime != previous_runtime and status[:active] and
-               status[:mode] == :recovery
+               web != previous_web and runtime != previous_runtime and not is_nil(status) and
+               status.active and status.lifecycle == :recovery
            end)
-  end
-
-  defp service_active? do
-    PlcRemote.ServiceMode.active?()
-  catch
-    :exit, _reason -> false
-  end
-
-  defp service_status do
-    PlcRemote.ServiceMode.status()
-  catch
-    :exit, _reason -> %{}
   end
 
   defp tailscale_processes do
     %{
-      connection_tasks: Process.whereis(PlcRemote.TailscaleConnectionTaskSupervisor),
-      manager: Process.whereis(PlcRemote.TailscaleManager),
-      proxy_tasks: Process.whereis(PlcRemote.TailscaleSessionTaskSupervisor)
+      connection_tasks: Process.whereis(PlcRemote.Tailscale.ConnectionSupervisor),
+      runtime: Process.whereis(PlcRemote.Tailscale.Runtime),
+      proxy_tasks: Process.whereis(PlcRemote.Tailscale.SessionSupervisor)
     }
   end
 
-  defp eventually(predicate, attempts \\ 50)
-
+  defp eventually(predicate, attempts \\ 100)
   defp eventually(_predicate, 0), do: false
 
   defp eventually(predicate, attempts) do

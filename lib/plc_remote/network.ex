@@ -1,10 +1,9 @@
 defmodule PlcRemote.Network do
   @moduledoc """
-  Builds fail-closed configurations for the three network roles.
+  Public API and pure configuration helpers for the two Ethernet roles.
 
-  Internet is Ethernet-only. The second Ethernet role is an isolated PLC LAN
-  without a gateway or DNS. Wi-Fi is reserved exclusively for the local setup
-  and recovery access point.
+  Runtime operations delegate to `Network.Runtime`; plan construction remains
+  pure so disable-first and isolation invariants can be tested exhaustively.
   """
 
   @service_interface "wlan0"
@@ -12,12 +11,19 @@ defmodule PlcRemote.Network do
 
   @typedoc "A physical or recovery network role."
   @type role :: :machine_lan | :internet_uplink | :service_ap | :recovery
-
   @typedoc "A Linux network interface name."
   @type ifname :: String.t()
-
   @typedoc "A detected network interface."
   @type interface_info :: PlcRemote.Adapters.Network.interface_info()
+
+  @spec status() :: PlcRemote.Network.Status.t()
+  defdelegate status(), to: PlcRemote.Network.Runtime
+
+  @spec reapply() :: :ok | {:error, term()}
+  defdelegate reapply(), to: PlcRemote.Network.Runtime
+
+  @spec cycle_uplink() :: :ok | {:error, term()}
+  defdelegate cycle_uplink(), to: PlcRemote.Network.Runtime
 
   @doc "Returns the fixed interface name assigned to a non-Ethernet role."
   @spec interface(:service_ap | :recovery) :: ifname()
@@ -75,11 +81,7 @@ defmodule PlcRemote.Network do
   def role_ifnames(settings, interfaces) do
     %{
       machine_lan:
-        active_ifname(
-          interfaces,
-          settings.machine.interface_hw_path,
-          settings.machine.enabled
-        ),
+        active_ifname(interfaces, settings.machine.interface_hw_path, settings.machine.enabled),
       internet_uplink:
         active_ifname(
           interfaces,
@@ -107,11 +109,7 @@ defmodule PlcRemote.Network do
              prefix_length in 0..32 do
     %{
       type: VintageNetEthernet,
-      ipv4: %{
-        method: :static,
-        address: address,
-        prefix_length: prefix_length
-      }
+      ipv4: %{method: :static, address: address, prefix_length: prefix_length}
     }
   end
 
@@ -122,15 +120,12 @@ defmodule PlcRemote.Network do
 
   @doc "Builds a disabled configuration for a wired interface."
   @spec disabled_ethernet_config() :: map()
-  def disabled_ethernet_config do
-    %{type: VintageNetEthernet, ipv4: %{method: :disabled}}
-  end
+  def disabled_ethernet_config, do: %{type: VintageNetEthernet, ipv4: %{method: :disabled}}
 
   @doc "Builds a DHCP or static Internet Ethernet configuration."
   @spec internet_uplink_config(map()) :: map()
-  def internet_uplink_config(ip_config) do
-    %{type: VintageNetEthernet, ipv4: ipv4_config(ip_config)}
-  end
+  def internet_uplink_config(ip_config),
+    do: %{type: VintageNetEthernet, ipv4: ipv4_config(ip_config)}
 
   @doc "Builds the isolated service access point and captive DNS configuration."
   @spec service_access_point_config(map(), String.t(), String.t(), :open | :wpa2) :: map()
@@ -144,11 +139,7 @@ defmodule PlcRemote.Network do
         regulatory_domain: regulatory_domain,
         networks: [access_point_network(service, ssid, security)]
       },
-      ipv4: %{
-        method: :static,
-        address: address,
-        prefix_length: service.prefix_length
-      },
+      ipv4: %{method: :static, address: address, prefix_length: service.prefix_length},
       dhcpd: %{
         start: {a, b, c, 20},
         end: {a, b, c, 250},
@@ -161,15 +152,12 @@ defmodule PlcRemote.Network do
           search: ["plc.setup"]
         }
       },
-      dnsd: %{
-        records: [{"plc.setup", address}, {"*", address}]
-      }
+      dnsd: %{records: [{"plc.setup", address}, {"*", address}]}
     }
   end
 
-  defp access_point_network(_service, ssid, :open) do
-    %{mode: :ap, ssid: ssid, key_mgmt: :none}
-  end
+  defp access_point_network(_service, ssid, :open),
+    do: %{mode: :ap, ssid: ssid, key_mgmt: :none}
 
   defp access_point_network(service, ssid, :wpa2) do
     %{
@@ -207,10 +195,8 @@ defmodule PlcRemote.Network do
   end
 
   defp maybe_add_internet(configurations, _ifname, _ethernet, false), do: configurations
-
   defp active_ifname(interfaces, path, true), do: find_ifname(interfaces, path)
   defp active_ifname(_interfaces, _path, false), do: nil
-
   defp find_ifname(_interfaces, hw_path) when hw_path in [nil, ""], do: nil
 
   defp find_ifname(interfaces, hw_path) do

@@ -93,7 +93,7 @@ accordingly and restrict access with tailnet ACLs/grants.
 The pinned `sid2baker/s7` library remains available independently in IEx:
 
 ```elixir
-plc = PlcRemote.Configuration.get().machine.plc_address
+plc = PlcRemote.Configuration.current().machine.plc_address
 {:ok, client} = S7.connect(plc, rack: 0, slot: 2, reconnect: true)
 {:ok, value} = S7.read(client, "DB1.DBW0")
 :ok = S7.close(client)
@@ -122,10 +122,10 @@ Retrieve service credentials over local UART/USB IEx:
 
 ```elixir
 PlcRemote.Configuration.service_credentials()
-PlcRemote.NetworkManager.status()
-PlcRemote.TailscaleManager.status()
-PlcRemote.ServiceMode.activate()
-PlcRemote.RecoveryManager.status()
+PlcRemote.Diagnostics.snapshot()
+PlcRemote.Diagnostics.explain()
+PlcRemote.Health.active_alarms()
+PlcRemote.Service.activate()
 ```
 
 ## Firmware safety
@@ -171,6 +171,8 @@ browser.
 - [`tailscale/tailscale-rs`](https://github.com/tailscale/tailscale-rs), tag
   `v0.4.0`, `ts_elixir` subproject
 - Phoenix LiveView and Bandit for the local wizard
+- Finitomata for explicit Tailscale, Service, Recovery, and Firmware lifecycles
+- Alarmist for primitive and derived persistent health conditions
 - VintageNet and Circuits.GPIO for target networking and service recovery
 - Volt 0.17.10 as a host-only TypeScript/CSS build tool
 
@@ -194,7 +196,7 @@ Local portal preview:
 
 ```sh
 iex -S mix
-PlcRemote.ServiceMode.activate()
+PlcRemote.Service.activate()
 # http://127.0.0.1:4000/
 ```
 

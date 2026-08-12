@@ -4,7 +4,7 @@ defmodule PlcRemote.Adapters.Host.Tailscale do
   @behaviour PlcRemote.Adapters.Tailscale
 
   @impl true
-  def connect(_settings, _auth_key), do: {:error, :not_available_on_host}
+  def connect(_settings, _auth_key, _opts), do: {:error, :not_available_on_host}
 
   @impl true
   def accept(_listener), do: {:error, :not_available_on_host}

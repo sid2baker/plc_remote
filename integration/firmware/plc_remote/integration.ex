@@ -12,16 +12,17 @@ defmodule PlcRemote.Integration do
   def health do
     %{
       application: application_running?(:plc_remote),
-      network: safe_status(PlcRemote.NetworkManager),
-      service: safe_status(PlcRemote.ServiceMode),
+      alarms: PlcRemote.Health.active_alarms(),
+      network: PlcRemote.Network.status(),
+      service: PlcRemote.Service.status(),
       supervision: supervision(),
-      tailscale: safe_status(PlcRemote.TailscaleManager)
+      tailscale: PlcRemote.Tailscale.status()
     }
   end
 
   @spec interfaces() :: [map()]
   def interfaces do
-    PlcRemote.NetworkManager.status().interfaces
+    PlcRemote.Network.status().interfaces
   end
 
   @spec provision_ethernet_roles(:inet.port_number()) :: {:ok, map()} | {:error, term()}
@@ -41,11 +42,11 @@ defmodule PlcRemote.Integration do
              "plc_destination_port" => Integer.to_string(destination_port),
              "recovery_auto_reboot" => "false"
            }),
-         :ok <- PlcRemote.NetworkManager.reapply() do
+         :ok <- PlcRemote.Network.reapply() do
       {:ok,
        %{
          settings: redacted_settings(settings),
-         status: PlcRemote.NetworkManager.status()
+         status: PlcRemote.Network.status()
        }}
     end
   end
@@ -54,7 +55,7 @@ defmodule PlcRemote.Integration do
   def await_connection(expected, timeout_ms \\ 30_000) do
     await(
       fn ->
-        status = PlcRemote.NetworkManager.status()
+        status = PlcRemote.Network.status()
         if status.connection == expected, do: {:ok, status}, else: :retry
       end,
       timeout_ms
@@ -100,11 +101,12 @@ defmodule PlcRemote.Integration do
          {:ok, enrollment} <- decode_enrollment(encoded),
          {:ok, settings} <-
            PlcRemote.Configuration.update(%{
-             "tailscale_auth_key" => enrollment.auth_key,
              "tailscale_enabled" => "true",
              "tailscale_hostname" => enrollment.hostname,
              "tailscale_tags" => Enum.join(enrollment.tags, ",")
-           }) do
+           }),
+         :ok <-
+           PlcRemote.Tailscale.enroll(PlcRemote.Tailscale.Enrollment.new(enrollment.auth_key)) do
       {:ok,
        %{
          auth_payload_removed: not File.exists?(payload_path),
@@ -117,11 +119,11 @@ defmodule PlcRemote.Integration do
   def await_tailnet(timeout_ms \\ 180_000) do
     await(
       fn ->
-        status = PlcRemote.TailscaleManager.status()
+        status = PlcRemote.Tailscale.status()
 
-        if status.state == :connected do
+        if status.lifecycle == :connected do
           with {:ok, identity} <- tailnet_identity() do
-            {:ok, %{identity: identity, status: status}}
+            {:ok, %{identity: identity, lifecycle: :connected, status: status}}
           else
             _error -> :retry
           end
@@ -137,14 +139,15 @@ defmodule PlcRemote.Integration do
   def await_tailnet_failure(timeout_ms \\ 90_000) do
     await(
       fn ->
-        status = PlcRemote.TailscaleManager.status()
-        manager = :sys.get_state(PlcRemote.TailscaleManager)
+        status = PlcRemote.Tailscale.status()
+        payload = GenServer.call(PlcRemote.Tailscale.FSM, :state).payload
 
-        if status.state == :error and is_nil(status.tailnet_ipv4) and is_nil(manager.listener) do
+        if status.lifecycle == :retry_wait and is_nil(status.tailnet_ipv4) and
+             is_nil(payload.listener) do
           {:ok,
            %{
              listener_unavailable: true,
-             state: :error,
+             state: :retry_wait,
              tailnet_ipv4: nil
            }}
         else
@@ -197,8 +200,8 @@ defmodule PlcRemote.Integration do
   @spec persistent_status() :: map()
   def persistent_status do
     %{
-      network: PlcRemote.NetworkManager.status(),
-      settings: PlcRemote.Configuration.get() |> redacted_settings()
+      network: PlcRemote.Network.status(),
+      settings: PlcRemote.Configuration.current() |> redacted_settings()
     }
   end
 
@@ -264,7 +267,7 @@ defmodule PlcRemote.Integration do
   end
 
   defp tailnet_identity do
-    case :sys.get_state(PlcRemote.TailscaleManager) do
+    case GenServer.call(PlcRemote.Tailscale.FSM, :state).payload do
       %{device: nil} ->
         {:error, :tailnet_device_unavailable}
 
@@ -279,7 +282,7 @@ defmodule PlcRemote.Integration do
         end
     end
   catch
-    :exit, reason -> {:error, {:tailnet_manager_unavailable, reason}}
+    :exit, reason -> {:error, {:tailscale_runtime_unavailable, reason}}
   end
 
   defp format_ip(address) when is_tuple(address), do: address |> :inet.ntoa() |> to_string()
@@ -332,22 +335,17 @@ defmodule PlcRemote.Integration do
     %{settings | service: service}
   end
 
-  defp safe_status(module) do
-    module.status()
-  catch
-    :exit, reason -> %{error: inspect(reason)}
-  end
-
   defp supervision do
     [
       PlcRemote.Configuration,
-      PlcRemote.NetworkManager,
-      PlcRemote.TailscaleSupervisor,
-      PlcRemote.TailscaleManager,
-      PlcRemote.ServiceMode.Supervisor,
-      PlcRemote.ServiceMode,
-      PlcRemote.RecoveryManager,
-      PlcRemote.FirmwareValidator
+      PlcRemote.Health.Reporter,
+      PlcRemote.Network.Runtime,
+      PlcRemote.Tailscale.Supervisor,
+      PlcRemote.Tailscale.Runtime,
+      PlcRemote.Service.Supervisor,
+      PlcRemote.Service.Runtime,
+      PlcRemote.Recovery.Runtime,
+      PlcRemote.Firmware.Runtime
     ]
     |> Map.new(&{&1, is_pid(Process.whereis(&1))})
   end

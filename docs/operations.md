@@ -32,10 +32,10 @@ before Nerves mounts `/root`; it should not recur.
 From trusted local UART/USB IEx:
 
 ```elixir
-PlcRemote.NetworkManager.status()
-PlcRemote.TailscaleManager.status()
-PlcRemote.RecoveryManager.status()
-PlcRemote.FirmwareValidator.status()
+PlcRemote.Diagnostics.snapshot()
+PlcRemote.Diagnostics.explain()
+PlcRemote.Health.active_alarms()
+Alarmist.info()
 RingLogger.grep(~r/network|tailscale|recovery|firmware/i)
 ```
 
@@ -82,19 +82,20 @@ For a commissioned gateway with Tailscale enabled:
 | 2 minutes | Immediate Tailscale reconnect |
 | 5 minutes | Reapply disable-first Ethernet roles |
 | 15 minutes | Cycle the Internet Ethernet role |
-| 30 minutes | Restart Tailscale manager and all tasks |
+| 30 minutes | Restart the complete Tailscale FSM/action boundary |
 | 60 minutes | Persist budget and reboot |
 
 At most two consecutive automatic recovery reboots occur by default. The budget
 resets after ten minutes of stable Tailscale access:
 
 ```elixir
-PlcRemote.RecoveryManager.reset_reboot_budget()
+PlcRemote.Recovery.reset_reboot_budget()
 ```
 
-Automatic reboot is suppressed while uncommissioned, in service mode, with
-Tailscale disabled, for unvalidated firmware, after budget exhaustion, or when
-the updated budget cannot be persisted.
+Automatic recovery starts only while the derived `RemoteAccessUnavailable`
+alarm is set. Automatic reboot is suppressed when disabled, whenever firmware
+is not explicitly validated, after budget exhaustion, or when the updated
+budget cannot be persisted.
 
 ## GPIO service mode
 
@@ -112,18 +113,18 @@ returns to the open first-boot AP.
 
    ```elixir
    Nerves.Runtime.firmware_validation_status()
-   PlcRemote.TailscaleManager.status()
+   PlcRemote.Tailscale.status()
    ```
 
 2. Record proven remote access:
 
    ```elixir
-   :ok = PlcRemote.FirmwareValidator.prepare_for_update()
+   :ok = PlcRemote.Firmware.prepare_for_update()
    ```
 
 3. Apply a signed fwup image over signature-enforcing transport.
 4. Allow the alternate slot to boot.
-5. Monitor `PlcRemote.FirmwareValidator.status/0`.
+5. Monitor `PlcRemote.Firmware.status/0`.
 6. Do not install another candidate until it is validated.
 
 A commissioned candidate must hold Tailscale for one minute. If Internet works

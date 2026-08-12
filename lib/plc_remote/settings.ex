@@ -2,9 +2,8 @@ defmodule PlcRemote.Settings do
   @moduledoc """
   Validated, persistent configuration for networking, Tailscale, and service mode.
 
-  Tailscale authentication keys are intentionally returned separately from the
-  persistent settings so callers can consume them once without writing them to
-  disk.
+  Tailscale authentication keys are intentionally extracted separately from
+  persistent settings and consumed only by the Tailscale enrollment command.
   """
 
   import Bitwise
@@ -78,18 +77,13 @@ defmodule PlcRemote.Settings do
   @spec decode(binary(), keyword()) :: {:ok, t()} | {:error, term()}
   def decode(json, opts \\ []) when is_binary(json) do
     with {:ok, value} <- Jason.decode(json),
-         {:ok, settings, _auth_key} <- update(defaults(opts), storage_params(value)) do
+         {:ok, settings} <- update(defaults(opts), storage_params(value)) do
       {:ok, Map.put(settings, :commissioned, stored_commissioned(value))}
     end
   end
 
-  @doc """
-  Applies web-form parameters and validates the complete configuration.
-
-  A non-empty `tailscale_auth_key` is returned separately and is never inserted
-  into the settings map.
-  """
-  @spec update(t(), map()) :: {:ok, t(), String.t() | nil} | {:error, errors()}
+  @doc "Applies non-secret parameters and validates the complete configuration."
+  @spec update(t(), map()) :: {:ok, t()} | {:error, errors()}
   def update(current, params) when is_map(params) do
     candidate = %{
       version: @version,
@@ -103,10 +97,21 @@ defmodule PlcRemote.Settings do
 
     case validate(candidate) do
       %{} = errors when map_size(errors) == 0 ->
-        {:ok, candidate, blank_to_nil(param(params, "tailscale_auth_key", ""))}
+        {:ok, candidate}
 
       errors ->
         {:error, errors}
+    end
+  end
+
+  @doc "Removes and returns the one-use enrollment credential from form parameters."
+  @spec pop_enrollment(map()) :: {PlcRemote.Tailscale.Enrollment.t() | nil, map()}
+  def pop_enrollment(params) when is_map(params) do
+    {auth_key, params} = Map.pop(params, "tailscale_auth_key")
+
+    case blank_to_nil(auth_key) do
+      nil -> {nil, params}
+      auth_key -> {PlcRemote.Tailscale.Enrollment.new(auth_key), params}
     end
   end
 
@@ -166,10 +171,8 @@ defmodule PlcRemote.Settings do
   end
 
   defp tailscale_settings(current, params) do
-    auth_key_supplied? = not is_nil(blank_to_nil(param(params, "tailscale_auth_key", "")))
-
     %{
-      enabled: auth_key_supplied? or boolean_param(params, "tailscale_enabled", current.enabled),
+      enabled: boolean_param(params, "tailscale_enabled", current.enabled),
       hostname: param(params, "tailscale_hostname", current.hostname),
       tags: tags_param(params, current.tags),
       listen_port: integer_param(params, "tailscale_listen_port", current.listen_port),

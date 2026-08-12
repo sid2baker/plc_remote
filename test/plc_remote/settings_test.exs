@@ -22,14 +22,17 @@ defmodule PlcRemote.SettingsTest do
   test "allows tailnet enrollment before PLC settings are configured" do
     settings = Settings.defaults(service_psk: "commissioning-key")
 
-    assert {:ok, updated, "tskey-auth-once"} =
-             Settings.update(settings, %{
-               "uplink_mode" => "ethernet",
-               "ethernet_interface_hw_path" => "/devices/platform/internet",
-               "tailscale_enabled" => "true",
-               "tailscale_auth_key" => "tskey-auth-once"
-             })
+    {enrollment, params} =
+      Settings.pop_enrollment(%{
+        "uplink_mode" => "ethernet",
+        "ethernet_interface_hw_path" => "/devices/platform/internet",
+        "tailscale_enabled" => "true",
+        "tailscale_auth_key" => "tskey-auth-once"
+      })
 
+    assert {:ok, updated} = Settings.update(settings, params)
+    assert PlcRemote.Tailscale.Enrollment.consume(enrollment) == "tskey-auth-once"
+    refute Map.has_key?(params, "tailscale_auth_key")
     refute updated.machine.enabled
     assert updated.tailscale.enabled
   end
@@ -65,7 +68,9 @@ defmodule PlcRemote.SettingsTest do
       "service_psk" => "new-service-password"
     }
 
-    assert {:ok, updated, "tskey-auth-once"} = Settings.update(current, params)
+    {enrollment, params} = Settings.pop_enrollment(params)
+    assert {:ok, updated} = Settings.update(current, params)
+    assert PlcRemote.Tailscale.Enrollment.consume(enrollment) == "tskey-auth-once"
     assert updated.machine.plc_address == "10.20.30.10"
     assert updated.machine.interface_hw_path == "/devices/platform/native-gigabit"
     assert updated.uplink.mode == :ethernet
@@ -84,14 +89,14 @@ defmodule PlcRemote.SettingsTest do
   test "commissioned state cannot be forged through portal parameters" do
     settings = Settings.defaults(service_psk: "commissioning-key")
 
-    assert {:ok, updated, nil} = Settings.update(settings, %{"commissioned" => "true"})
+    assert {:ok, updated} = Settings.update(settings, %{"commissioned" => "true"})
     refute updated.commissioned
   end
 
   test "rejects legacy Wi-Fi modes by normalizing them to disabled" do
     settings = Settings.defaults(service_psk: "commissioning-key")
 
-    assert {:ok, updated, nil} =
+    assert {:ok, updated} =
              Settings.update(settings, %{
                "uplink_mode" => "wifi",
                "wifi_ssid" => "Plant-WAN",
@@ -105,28 +110,31 @@ defmodule PlcRemote.SettingsTest do
   test "rejects a forged unknown uplink mode instead of retaining Ethernet" do
     settings = Settings.defaults(service_psk: "commissioning-key")
 
-    assert {:ok, ethernet, nil} =
+    assert {:ok, ethernet} =
              Settings.update(settings, %{
                "uplink_mode" => "ethernet",
                "ethernet_interface_hw_path" => "/devices/usb/internet"
              })
 
-    assert {:ok, disabled, nil} = Settings.update(ethernet, %{"uplink_mode" => "wifi"})
+    assert {:ok, disabled} = Settings.update(ethernet, %{"uplink_mode" => "wifi"})
     assert disabled.uplink.mode == :disabled
   end
 
   test "auth keys are never encoded into persistent settings" do
     settings = Settings.defaults(service_psk: "commissioning-key")
 
-    assert {:ok, updated, "tskey-auth-secret"} =
-             Settings.update(settings, %{
-               "machine_enabled" => "true",
-               "machine_interface_hw_path" => "/devices/platform/machine",
-               "uplink_mode" => "ethernet",
-               "ethernet_interface_hw_path" => "/devices/usb/uplink",
-               "tailscale_auth_key" => "tskey-auth-secret"
-             })
+    {enrollment, params} =
+      Settings.pop_enrollment(%{
+        "machine_enabled" => "true",
+        "machine_interface_hw_path" => "/devices/platform/machine",
+        "uplink_mode" => "ethernet",
+        "ethernet_interface_hw_path" => "/devices/usb/uplink",
+        "tailscale_enabled" => "true",
+        "tailscale_auth_key" => "tskey-auth-secret"
+      })
 
+    assert {:ok, updated} = Settings.update(settings, params)
+    assert PlcRemote.Tailscale.Enrollment.consume(enrollment) == "tskey-auth-secret"
     assert updated.tailscale.enabled
 
     assert {:ok, encoded} = Settings.encode(updated)

@@ -11,7 +11,7 @@ defmodule PlcRemote.Recovery.Safety do
       not recovery.auto_reboot ->
         {:error, :disabled}
 
-      firmware_status == :unvalidated ->
+      firmware_status != :validated ->
         {:error, :firmware_unvalidated}
 
       consecutive_reboots >= recovery.max_consecutive_reboots ->

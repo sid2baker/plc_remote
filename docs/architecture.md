@@ -21,7 +21,7 @@ kernel forwarding.
 Authorized tailnet client
   -> gateway tailnet IPv4 + fixed TCP listen port
   -> tailscale-rs userspace listener
-  -> PlcRemote.TcpProxy
+  -> PlcRemote.Proxy.TcpProxy
   -> one configured PLC IPv4 + fixed destination port
 ```
 
@@ -36,7 +36,7 @@ available from local IEx.
 ## Ethernet ownership
 
 `PlcRemote.Configuration` persists stable `/devices/...` paths. VintageNet's
-ifname-keyed persistence is disabled. `PlcRemote.NetworkManager` owns Ethernet
+ifname-keyed persistence is disabled. `PlcRemote.Network.Runtime` owns Ethernet
 configuration and always:
 
 1. Detects physical Ethernet interfaces.
@@ -83,9 +83,11 @@ The project intentionally pins experimental `tailscale-rs` v0.4.0. The required
 `vm.args` before native code loads. Identity state is owner-only under
 `/data/plc_remote/tailscale`.
 
-`PlcRemote.TailscaleManager` owns connection retries, the optional fixed
-listener, accepted session tasks, and public non-secret status. A one-for-all
-supervisor tears down manager, connection tasks, and proxy sessions together.
+`PlcRemote.Tailscale.FSM` owns connection lifecycle. `Tailscale.Runtime`
+translates typed Network/configuration facts, task results, and timers into FSM
+events; `Tailscale.Actions` owns native connection and fixed listener effects. A
+one-for-all supervisor tears down runtime, FSM, connection tasks, and proxy
+sessions together.
 A reproducible dependency patch replaces a reproduced late-netmon `.unwrap()`
 panic during runtime shutdown with a non-fatal debug event.
 
@@ -102,7 +104,7 @@ A commissioned Tailscale outage escalates through:
 Reboots are suppressed during setup/service mode and for unvalidated candidate
 firmware. The budget resets only after stable Tailscale operation.
 
-`PlcRemote.FirmwareValidator` validates uncommissioned candidates after the
+`PlcRemote.Firmware` validates uncommissioned candidates after the
 setup AP is healthy and commissioned candidates after stable tailnet access.
 Pre-update connectivity evidence permits rollback when a candidate loses remote
 access; an ordinary external outage is not automatically blamed on firmware.
@@ -112,22 +114,25 @@ access; an ordinary external outage is not automatically blamed on firmware.
 ```text
 PlcRemote.Supervisor (:rest_for_one)
 ├── Configuration
-├── NetworkManager
-├── TailscaleSupervisor (:one_for_all)
+├── Phoenix.PubSub / typed Events
+├── Health.Reporter / Alarmist read model
+├── Network.Runtime
+├── Tailscale.Supervisor (:one_for_all)
 │   ├── connection Task.Supervisor
 │   ├── session Task.Supervisor
-│   └── TailscaleManager
-├── ServiceMode.Supervisor (:one_for_all)
+│   └── Tailscale.Runtime + linked FSM
+├── Service.Supervisor (:one_for_all)
 │   ├── Phoenix runtime (listener disabled)
 │   ├── temporary Bandit supervisor
-│   └── ServiceMode
-├── RecoveryManager
-└── FirmwareValidator
+│   └── Service.Runtime + linked FSM
+├── Recovery.Runtime + linked FSM
+└── Firmware.Runtime + linked FSM
 ```
 
 Configuration loss restarts every consumer; network loss restarts remote and
-service boundaries. Tailscale and service resources therefore cannot remain
-orphaned after manager failure.
+service boundaries. Domain effects and their FSM lifecycles therefore cannot
+remain orphaned after runtime failure. `PlcRemote.Health` answers current
+conditions; typed subsystem statuses answer current activity.
 
 ## Hardware validation
 
@@ -171,10 +176,11 @@ This lane validates firmware packaging, VintageNet, `/data` persistence, stable
 role resolution, supervision, and native loading.
 
 The protected live-tailnet variant transfers a one-use credential over SFTP to
-guest `/tmp`; firmware reads and deletes it before calling the normal
-configuration path. Enrollment therefore exercises the real manager/adapter
-boundary without exposing the key through serial history, SSH commands,
-persistent settings, firmware artifacts, or process arguments. A mature
+guest `/tmp`; firmware reads and deletes it, persists non-secret configuration,
+and sends a separate redacted enrollment command. Enrollment therefore
+exercises the real FSM/action/adapter boundary without exposing the key through
+serial history, SSH commands, persistent settings, firmware artifacts, or
+process arguments. A mature
 `tailscaled` CI peer tests the deployed TCP direction through the fixed PLC
 proxy. Physical CM4/CM5 tests remain authoritative for carrier drivers, Wi-Fi
 AP, GPIO, and electrical power-loss behavior.

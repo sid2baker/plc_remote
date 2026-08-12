@@ -176,7 +176,7 @@ rm -f "$enrollment"
 
 tailnet="$(ssh_exec 'IO.puts(PlcRemote.Integration.result(PlcRemote.Integration.await_tailnet()))')"
 printf '%s\n' "$tailnet"
-printf '%s\n' "$tailnet" | grep -q 'state: :connected'
+printf '%s\n' "$tailnet" | grep -q 'lifecycle: :connected'
 tailnet_ip="$(printf '%s\n' "$tailnet" | sed -n 's/.*tailnet_ipv4: "\([0-9.]*\)".*/\1/p')"
 
 [ -n "$tailnet_ip" ] || {
@@ -206,7 +206,7 @@ await_ssh
 
 reconnected="$(ssh_exec 'IO.puts(PlcRemote.Integration.result(PlcRemote.Integration.await_tailnet()))')"
 printf '%s\n' "$reconnected"
-printf '%s\n' "$reconnected" | grep -q 'state: :connected'
+printf '%s\n' "$reconnected" | grep -q 'lifecycle: :connected'
 
 identity="$(ssh_exec 'IO.puts(PlcRemote.Integration.result(PlcRemote.Integration.verify_tailnet_identity()))')"
 printf '%s\n' "$identity"

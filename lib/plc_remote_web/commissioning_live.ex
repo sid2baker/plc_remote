@@ -1,14 +1,7 @@
 defmodule PlcRemoteWeb.CommissioningLive do
   use PlcRemoteWeb, :live_view
 
-  alias PlcRemote.{
-    Configuration,
-    FirmwareValidator,
-    NetworkManager,
-    RecoveryManager,
-    ServiceMode,
-    TailscaleManager
-  }
+  alias PlcRemote.{Configuration, Firmware, Health, Network, Recovery, Service, Tailscale}
 
   @refresh_interval_ms 1_000
   @steps ~w(network tailscale verify advanced)
@@ -17,7 +10,7 @@ defmodule PlcRemoteWeb.CommissioningLive do
   def mount(_params, _session, socket) do
     socket =
       socket
-      |> assign(:settings, Configuration.get())
+      |> assign(:settings, Configuration.current())
       |> assign(:draft, %{})
       |> assign(:errors, %{})
       |> assign(:notice, nil)
@@ -26,7 +19,7 @@ defmodule PlcRemoteWeb.CommissioningLive do
       |> refresh_status()
 
     if connected?(socket) do
-      ServiceMode.touch()
+      Service.touch()
       send(self(), :refresh)
     end
 
@@ -57,7 +50,7 @@ defmodule PlcRemoteWeb.CommissioningLive do
   end
 
   def handle_event("finish-commissioning", _params, socket) do
-    case ServiceMode.finish_commissioning() do
+    case Service.finish_commissioning() do
       {:ok, :verifying} ->
         {:noreply, assign(socket, handoff: :verification, notice: nil)}
 
@@ -69,7 +62,7 @@ defmodule PlcRemoteWeb.CommissioningLive do
   def handle_event("exit-service", _params, socket) do
     Task.start(fn ->
       Process.sleep(750)
-      ServiceMode.deactivate()
+      Service.deactivate()
     end)
 
     {:noreply, assign(socket, :handoff, :exit)}
@@ -83,10 +76,13 @@ defmodule PlcRemoteWeb.CommissioningLive do
   end
 
   defp save_step(socket, params, notice, next_step, extra_assigns) do
-    ServiceMode.touch()
+    Service.touch()
+    {enrollment, params} = PlcRemote.Settings.pop_enrollment(params)
 
     case Configuration.update(params) do
       {:ok, settings} ->
+        if enrollment, do: Tailscale.enroll(enrollment)
+
         socket =
           socket
           |> assign(:settings, settings)
@@ -117,16 +113,17 @@ defmodule PlcRemoteWeb.CommissioningLive do
   defp public_draft(params), do: Map.drop(params, ["tailscale_auth_key", "service_psk"])
 
   defp refresh_status(socket) do
-    service = safe_status(ServiceMode, empty_service_status())
+    service = Service.status()
 
     socket =
       assign(socket,
-        settings: safe_settings(socket.assigns[:settings]),
-        firmware: safe_status(FirmwareValidator, %{firmware: :unknown}),
-        network: safe_status(NetworkManager, empty_network_status()),
-        recovery: safe_status(RecoveryManager, %{consecutive_reboots: 0, last_action: nil}),
+        settings: Configuration.current(),
+        firmware: Firmware.status(),
+        health: Health.snapshot(),
+        network: Network.status(),
+        recovery: Recovery.status(),
         service: service,
-        tailscale: safe_status(TailscaleManager, empty_tailscale_status())
+        tailscale: Tailscale.status()
       )
 
     if socket.assigns.handoff == :verification and service.verification.state == :failed do
@@ -134,20 +131,6 @@ defmodule PlcRemoteWeb.CommissioningLive do
     else
       socket
     end
-  end
-
-  defp safe_settings(nil), do: Configuration.get()
-
-  defp safe_settings(current) do
-    Configuration.get()
-  catch
-    :exit, _reason -> current
-  end
-
-  defp safe_status(module, fallback) do
-    module.status()
-  catch
-    :exit, _reason -> fallback
   end
 
   defp normalize_step(step, true) when step in @steps, do: step
@@ -161,20 +144,24 @@ defmodule PlcRemoteWeb.CommissioningLive do
   defp network_ready_to_continue?(_settings, network), do: network.connection == :internet
 
   defp tailscale_ready_to_continue?(_settings, _network, tailscale) do
-    tailscale.state == :connected
+    tailscale.lifecycle == :connected
   end
 
   defp check_state(true), do: :ok
   defp check_state(false), do: :pending
 
-  defp tailscale_check_state(%{state: :connected}), do: :ok
-  defp tailscale_check_state(%{state: :error}), do: :error
+  defp tailscale_check_state(%{lifecycle: :connected}), do: :ok
+  defp tailscale_check_state(%{lifecycle: :retry_wait}), do: :error
   defp tailscale_check_state(_tailscale), do: :pending
 
   defp finish_error(:automatic_commissioning_not_active),
     do: "Final commissioning is available only from the first-boot setup AP."
 
   defp finish_error(reason), do: inspect(reason)
+
+  defp error_reason(nil), do: nil
+  defp error_reason(%PlcRemote.Error{reason: reason}), do: inspect(reason)
+  defp error_reason(reason), do: inspect(reason)
 
   defp value(draft, field, fallback), do: Map.get(draft, field, fallback)
 
@@ -235,44 +222,10 @@ defmodule PlcRemoteWeb.CommissioningLive do
     "#{interface.ifname} · #{driver} · #{speed} · #{link}"
   end
 
-  defp remaining_label(%{mode: :automatic}), do: "No timeout during setup"
+  defp remaining_label(%{lifecycle: lifecycle})
+       when lifecycle in [:automatic, :verifying_automatic],
+       do: "No timeout during setup"
+
   defp remaining_label(%{expires_in_seconds: nil}), do: "Not active"
   defp remaining_label(service), do: "#{service.expires_in_seconds} seconds"
-
-  defp empty_network_status do
-    %{
-      applied_at: nil,
-      connection: nil,
-      interfaces: [],
-      last_error: "Network manager unavailable",
-      roles: %{machine_lan: nil, internet_uplink: nil},
-      uplink_mode: :disabled
-    }
-  end
-
-  defp empty_service_status do
-    %{
-      active: false,
-      address: "192.168.50.1",
-      expires_in_seconds: nil,
-      gpio_error: nil,
-      mode: nil,
-      secured: false,
-      ssid: nil,
-      verification: %{state: :idle, checks: %{}, error: nil}
-    }
-  end
-
-  defp empty_tailscale_status do
-    %{
-      active_sessions: 0,
-      destination: nil,
-      failure_count: 0,
-      listen_port: nil,
-      reason: "Tailscale manager unavailable",
-      retry_in_seconds: nil,
-      state: :unavailable,
-      tailnet_ipv4: nil
-    }
-  end
 end

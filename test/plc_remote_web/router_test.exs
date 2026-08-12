@@ -6,14 +6,14 @@ defmodule PlcRemoteWeb.RouterTest do
   import Plug.Conn, only: [get_resp_header: 2]
   import ExUnit.CaptureLog
 
-  alias PlcRemote.{Configuration, ServiceMode, Settings}
+  alias PlcRemote.{Configuration, Service, Settings}
   alias PlcRemoteWeb.Endpoint
 
   @endpoint Endpoint
 
   test "renders an Ethernet-only commissioning wizard without stored secrets" do
     {:ok, view, html} = live(build_conn(), "/")
-    service = Configuration.get().service
+    service = Configuration.current().service
 
     assert html =~ "Connect this gateway in three steps"
     assert html =~ "Connect one Ethernet port"
@@ -43,7 +43,7 @@ defmodule PlcRemoteWeb.RouterTest do
       )
       |> render_submit()
 
-    assert Configuration.get().uplink.mode == :ethernet
+    assert Configuration.current().uplink.mode == :ethernet
     assert html =~ "Internet connection works"
     assert has_element?(view, "a", "Continue to Tailscale")
   end
@@ -71,7 +71,7 @@ defmodule PlcRemoteWeb.RouterTest do
   end
 
   test "failed final verification returns the live page while keeping the AP active" do
-    original = Configuration.get()
+    original = Configuration.current()
     Application.put_env(:plc_remote, :auto_commissioning, true)
     Application.put_env(:plc_remote, :commissioning_verification_check_ms, 10)
     Application.put_env(:plc_remote, :commissioning_verification_timeout_ms, 50)
@@ -83,17 +83,17 @@ defmodule PlcRemoteWeb.RouterTest do
       Configuration.restore(original)
     end)
 
-    assert {:ok, candidate, nil} =
+    assert {:ok, candidate} =
              Settings.update(original, %{
                "uplink_mode" => "ethernet",
                "ethernet_interface_hw_path" => "/devices/host/usb-2.5-gigabit",
                "tailscale_enabled" => "true"
              })
 
-    assert :ok = ServiceMode.deactivate()
+    assert :ok = Service.deactivate()
     assert :ok = Configuration.restore(%{candidate | commissioned: false})
     restart_service_boundary()
-    assert eventually?(fn -> ServiceMode.status().mode == :automatic end)
+    assert eventually?(fn -> Service.status().lifecycle == :automatic end)
 
     {:ok, view, _html} = live(build_conn(), "/?step=verify")
     view |> element("button[phx-click='finish-commissioning']") |> render_click()
@@ -104,7 +104,7 @@ defmodule PlcRemoteWeb.RouterTest do
                not has_element?(view, "#commissioning-handoff")
            end)
 
-    assert ServiceMode.status().active
+    assert Service.status().active
   end
 
   test "filters one-time credentials from rendered output and LiveView logs" do
@@ -135,8 +135,8 @@ defmodule PlcRemoteWeb.RouterTest do
   end
 
   defp restart_service_boundary do
-    :ok = Supervisor.terminate_child(PlcRemote.Supervisor, PlcRemote.ServiceMode.Supervisor)
-    {:ok, _pid} = Supervisor.restart_child(PlcRemote.Supervisor, PlcRemote.ServiceMode.Supervisor)
+    :ok = Supervisor.terminate_child(PlcRemote.Supervisor, PlcRemote.Service.Supervisor)
+    {:ok, _pid} = Supervisor.restart_child(PlcRemote.Supervisor, PlcRemote.Service.Supervisor)
     :ok
   end
 
@@ -155,12 +155,12 @@ defmodule PlcRemoteWeb.RouterTest do
   setup do
     Application.put_env(:plc_remote, :auto_commissioning, false)
     restart_service_boundary()
-    assert :ok = ServiceMode.activate()
+    assert :ok = Service.activate()
 
     on_exit(fn ->
       Application.put_env(:plc_remote, :auto_commissioning, false)
       restart_service_boundary()
-      if ServiceMode.active?(), do: ServiceMode.deactivate()
+      if Service.active?(), do: Service.deactivate()
     end)
   end
 end

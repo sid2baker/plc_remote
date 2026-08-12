@@ -77,7 +77,7 @@ config :shoehorn, init: [:nerves_runtime, :nerves_pack]
 # test runs of new firmware, the firmware will automatically roll
 # back to the previous version. Delete this if implementing your own
 # way of validating that firmware is good.
-# PlcRemote.FirmwareValidator performs assisted validation after local health and
+# PlcRemote.Firmware performs assisted validation after local health and
 # tailnet checks. The generic startup guard would validate as soon as OTP starts,
 # which is too early to catch a firmware update that breaks remote connectivity.
 config :nerves_runtime, startup_guard_enabled: false
@@ -120,7 +120,7 @@ config :nerves_ssh,
 #   * usb0      - local recovery/commissioning connection
 #
 # Both Ethernet ports fail closed so kernel enumeration cannot swap the PLC and
-# Internet roles. PlcRemote.NetworkManager resolves persisted hardware paths on
+# Internet roles. PlcRemote.Network.Runtime resolves persisted hardware paths on
 # every boot, disables all detected Ethernet interfaces, and only then applies
 # the assigned machine/uplink configurations.
 #

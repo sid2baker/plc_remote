@@ -7,10 +7,12 @@ defmodule PlcRemote.Recovery.SafetyTest do
 
   test "permits only validated firmware within the persistent budget" do
     assert :ok = Safety.reboot_allowed?(@enabled, :validated, 0)
-    assert :ok = Safety.reboot_allowed?(@enabled, :unknown, 1)
 
     assert {:error, :firmware_unvalidated} =
              Safety.reboot_allowed?(@enabled, :unvalidated, 0)
+
+    assert {:error, :firmware_unvalidated} =
+             Safety.reboot_allowed?(@enabled, :unknown, 1)
 
     assert {:error, :budget_exhausted} = Safety.reboot_allowed?(@enabled, :validated, 2)
   end

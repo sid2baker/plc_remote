@@ -18,6 +18,21 @@ config :nerves, :firmware, rootfs_overlay: "rootfs_overlay"
 
 config :nerves, source_date_epoch: "1786372525"
 
+config :alarmist,
+  alarm_levels: %{
+    PlcRemote.Health.Alarms.InternetUnavailable => :warning,
+    PlcRemote.Health.Alarms.NetworkConfigurationInvalid => :error,
+    PlcRemote.Health.Alarms.PlcInterfaceUnavailable => :warning,
+    PlcRemote.Health.Alarms.RemoteAccessExpected => :debug,
+    PlcRemote.Health.Alarms.TailscaleListenerUnavailable => :error,
+    PlcRemote.Health.Alarms.TailscaleUnavailable => :warning
+  }
+
+config :finitomata,
+  history_size: 5,
+  telemetria_levels: :none,
+  warn_ambiguous_start_fsm: false
+
 config :phoenix,
   json_library: Jason,
   filter_parameters: ["password", "psk", "auth_key", "web_secret"]

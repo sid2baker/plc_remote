@@ -32,7 +32,7 @@ defmodule PlcRemote.NetworkTest do
 
     settings = Settings.defaults(service_psk: "commissioning-key")
 
-    assert {:ok, settings, nil} =
+    assert {:ok, settings} =
              Settings.update(settings, %{
                "machine_enabled" => "true",
                "machine_interface_hw_path" => "/devices/platform/plc",
@@ -56,7 +56,7 @@ defmodule PlcRemote.NetworkTest do
   test "fails closed when an assigned Ethernet interface is not detected" do
     settings = Settings.defaults(service_psk: "commissioning-key")
 
-    assert {:ok, settings, nil} =
+    assert {:ok, settings} =
              Settings.update(settings, %{
                "machine_enabled" => "true",
                "machine_interface_hw_path" => "/devices/missing"
@@ -70,7 +70,7 @@ defmodule PlcRemote.NetworkTest do
     interfaces = [%{ifname: "eth0", hw_path: "/devices/internet", kind: :ethernet}]
     settings = Settings.defaults(service_psk: "commissioning-key")
 
-    assert {:ok, settings, nil} =
+    assert {:ok, settings} =
              Settings.update(settings, %{
                "uplink_mode" => "ethernet",
                "ethernet_interface_hw_path" => "/devices/internet"

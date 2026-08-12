@@ -56,18 +56,18 @@
                                                                                                              "Internet",
                                                                                                            else:
                                                                                                              "Not online"}</span>
-    <span class={["status", if(@tailscale.state == :connected, do: "ok", else: "pending")]}>Tailscale: {Phoenix.Naming.humanize(
-      @tailscale.state
+    <span class={["status", if(@tailscale.lifecycle == :connected, do: "ok", else: "pending")]}>Tailscale: {Phoenix.Naming.humanize(
+      @tailscale.lifecycle
     )}</span>
-    <span class={["status", if(@service.mode == :recovery, do: "ok", else: "pending")]}>AP: {if @service.mode ==
-                                                                                                  :recovery,
-                                                                                                do:
-                                                                                                  "Protected service",
-                                                                                                else:
-                                                                                                  "Open setup"}</span>
+    <span class={["status", if(@service.lifecycle == :recovery, do: "ok", else: "pending")]}>AP: {if @service.lifecycle ==
+                                                                                                       :recovery,
+                                                                                                     do:
+                                                                                                       "Protected service",
+                                                                                                     else:
+                                                                                                       "Open setup"}</span>
   </div>
 
-  <.notice :if={@service.mode == :automatic} class="warning">
+  <.notice :if={@service.lifecycle == :automatic} class="warning">
     <strong>This first-boot Wi-Fi is intentionally open.</strong>
     Complete setup without entering unrelated credentials or secrets.
   </.notice>
@@ -280,21 +280,21 @@
       </div>
 
       <div class="connection-feedback">
-        <.notice :if={@tailscale.state == :connected} class="success">
+        <.notice :if={@tailscale.lifecycle == :connected} class="success">
           <strong>Joined the tailnet successfully.</strong>
           Tailnet address: <code>{@tailscale.tailnet_ipv4}</code>.
         </.notice>
-        <.notice :if={@tailscale.state == :connecting} class="warning">
+        <.notice :if={@tailscale.lifecycle == :connecting} class="warning">
           Connecting to Tailscale now…
         </.notice>
-        <.notice :if={@tailscale.state == :waiting_for_network} class="warning">
+        <.notice :if={@tailscale.lifecycle == :waiting_for_network} class="warning">
           Waiting for an Internet connection before joining Tailscale.
         </.notice>
         <.notice
-          :if={@tailscale.state == :error}
+          :if={@tailscale.lifecycle == :retry_wait}
           class="failure"
         >
-          <strong>Tailscale could not connect.</strong> {@tailscale.reason}
+          <strong>Tailscale could not connect.</strong> {error_reason(@tailscale.last_error)}
           <span :if={@tailscale.retry_in_seconds}>Retrying in {@tailscale.retry_in_seconds} seconds.</span>
         </.notice>
       </div>
@@ -337,7 +337,7 @@
         state={tailscale_check_state(@tailscale)}
         label="Tailscale"
         detail={
-          @tailscale.reason ||
+          error_reason(@tailscale.last_error) ||
             if(@tailscale.tailnet_ipv4,
               do: "Joined with address #{@tailscale.tailnet_ipv4}.",
               else: "Waiting to join the tailnet."
@@ -349,8 +349,8 @@
     <div :if={@tailscale.retry_in_seconds} class="status-detail">
       Tailscale reconnect attempt {@tailscale.failure_count} in {@tailscale.retry_in_seconds} seconds.
     </div>
-    <div :if={@network.last_error} class="notice failure">
-      Network configuration: {@network.last_error}
+    <div :if={error_reason(@network.last_error)} class="notice failure">
+      Network configuration: {error_reason(@network.last_error)}
     </div>
     <.field_error errors={@errors} field="finish" />
 

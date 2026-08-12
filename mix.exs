@@ -16,7 +16,7 @@ defmodule PlcRemote.MixProject do
       listeners: listeners(Mix.target(), Mix.env()),
       start_permanent: Mix.env() == :prod,
       deps: deps(),
-      compilers: [:phoenix_live_view] ++ Mix.compilers(),
+      compilers: [:finitomata, :phoenix_live_view] ++ Mix.compilers(),
       releases: [{@app, release()}],
       dialyzer: [plt_add_apps: [:ex_unit]],
       aliases: aliases()
@@ -66,6 +66,8 @@ defmodule PlcRemote.MixProject do
       {:phoenix, "~> 1.8.4"},
       {:phoenix_html, "~> 4.3"},
       {:phoenix_live_view, "~> 1.2"},
+      {:alarmist, "~> 0.4.2"},
+      {:finitomata, "~> 0.43.0"},
       # Hardware support for CM4/CM5 targets
       {:circuits_gpio, "~> 2.3", targets: @hardware_targets},
       {:nerves_pack, "~> 0.7.1", targets: @firmware_targets},
