@@ -26,6 +26,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # QEMU tests boot a complete Nerves image, so they cannot run inside ExUnit.
       - name: Install Nerves and QEMU system dependencies
         run: |
           sudo apt-get update
@@ -47,7 +48,6 @@ jobs:
             libssl-dev \
             openssh-client \
             pkg-config \
-            python3 \
             qemu-system-x86 \
             qemu-utils \
             squashfs-tools
@@ -100,9 +100,7 @@ jobs:
         with:
           name: qemu-diagnostics
           path: |
-            _build/qemu_integration/*.log
-            _build/qemu_integration/*.port
-            _build/qemu_tailnet_invalid/*.log
+            _build/qemu_test/*.log
           if-no-files-found: ignore
           retention-days: 14
 

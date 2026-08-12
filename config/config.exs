@@ -22,6 +22,7 @@ config :alarmist,
   alarm_levels: %{
     PlcRemote.Health.Alarms.InternetUnavailable => :warning,
     PlcRemote.Health.Alarms.NetworkConfigurationInvalid => :error,
+    PlcRemote.Health.Alarms.PanelIOUnavailable => :warning,
     PlcRemote.Health.Alarms.PlcInterfaceUnavailable => :warning,
     PlcRemote.Health.Alarms.RemoteAccessExpected => :debug,
     PlcRemote.Health.Alarms.TailscaleListenerUnavailable => :error,

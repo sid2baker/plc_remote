@@ -8,6 +8,7 @@ defmodule PlcRemote.Diagnostics do
       network: PlcRemote.Network.status(),
       tailscale: PlcRemote.Tailscale.status(),
       service: PlcRemote.Service.status(),
+      panel: PlcRemote.Panel.status(),
       recovery: PlcRemote.Recovery.status(),
       health: PlcRemote.Health.snapshot()
     }
@@ -22,6 +23,7 @@ defmodule PlcRemote.Diagnostics do
     Network: Internet #{snapshot.health.internet}; PLC interface #{snapshot.health.plc_interface}
     Tailscale: #{snapshot.tailscale.lifecycle}; listener #{snapshot.tailscale.listener}
     Service: #{snapshot.service.lifecycle}
+    Panel: #{snapshot.panel.available}; IN2 #{snapshot.panel.input_2}; OUT1 #{snapshot.panel.output_1}; OUT2 #{snapshot.panel.output_2}
     Recovery: #{snapshot.recovery.lifecycle}; reboot budget #{snapshot.recovery.consecutive_reboots}
     Active alarms: #{format_alarms(snapshot.health.alarms)}
     """

@@ -7,10 +7,10 @@ import Config
     %{
       rpi4:
         {"aarch64-unknown-linux-gnu", "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER",
-         "aarch64-nerves-linux-gnu-gcc", "GPIO17", "ttyS0"},
+         "aarch64-nerves-linux-gnu-gcc", "GPIO23", "ttyS0"},
       rpi5:
         {"aarch64-unknown-linux-gnu", "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER",
-         "aarch64-nerves-linux-gnu-gcc", "GPIO23", "ttyAMA10"},
+         "aarch64-nerves-linux-gnu-gcc", "PIN16", "ttyAMA10"},
       x86_64:
         {"x86_64-unknown-linux-musl", "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER",
          "x86_64-nerves-linux-musl-gcc", "emulated", "ttyS0"}
@@ -38,12 +38,28 @@ config :tailscale, Tailscale.Native,
   target: rust_target,
   env: rust_env
 
+ipcbox_io =
+  if Mix.target() == :rpi5 do
+    %{input_2: "PIN18", output_1: "PIN13", output_2: "PIN15", user_1: "PIN22", user_2: "PIN37"}
+  else
+    %{
+      input_2: "GPIO24",
+      output_1: "GPIO27",
+      output_2: "GPIO22",
+      user_1: "GPIO25",
+      user_2: "GPIO26"
+    }
+  end
+
 config :plc_remote,
   settings_path: "/data/plc_remote/settings.json",
   recovery_state_path: "/data/plc_remote/recovery.json",
   update_expectation_path: "/data/plc_remote/update-expectation.json",
   tailscale_key_file: "/data/plc_remote/tailscale/keys.json",
   default_service_gpio: default_service_gpio,
+  fixed_service_gpio: Mix.target() in [:rpi4, :rpi5],
+  ipcbox_io: ipcbox_io,
+  panel_required: Mix.target() in [:rpi4, :rpi5],
   service_port: 80,
   auto_commissioning: true,
   network_adapter: PlcRemote.Adapters.Target.Network,
@@ -56,6 +72,9 @@ if Mix.target() == :x86_64 do
   config :plc_remote,
     auto_commissioning: false,
     default_service_gpio: "emulated",
+    fixed_service_gpio: false,
+    ipcbox_io: nil,
+    panel_required: false,
     gpio_adapter: PlcRemote.Integration.GPIO,
     recovery_auto_start: false
 end

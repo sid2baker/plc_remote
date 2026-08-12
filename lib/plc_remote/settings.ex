@@ -197,9 +197,11 @@ defmodule PlcRemote.Settings do
   end
 
   defp service_settings(current, params) do
+    {gpio_spec, active_level} = service_gpio_settings(current, params)
+
     %{
-      gpio_spec: param(params, "service_gpio_spec", current.gpio_spec),
-      active_level: integer_param(params, "service_active_level", current.active_level),
+      gpio_spec: gpio_spec,
+      active_level: active_level,
       hold_ms:
         params
         |> integer_param("service_hold_seconds", div(current.hold_ms, 1_000))
@@ -511,6 +513,17 @@ defmodule PlcRemote.Settings do
   defp normalize_uplink_mode(:ethernet), do: :ethernet
   defp normalize_uplink_mode(_legacy_or_disabled), do: :disabled
 
+  defp service_gpio_settings(current, params) do
+    if Application.get_env(:plc_remote, :fixed_service_gpio, false) do
+      {default_gpio_spec(), 0}
+    else
+      {
+        param(params, "service_gpio_spec", current.gpio_spec),
+        integer_param(params, "service_active_level", current.active_level)
+      }
+    end
+  end
+
   defp default_ip_config do
     %{
       method: :dhcp,
@@ -522,7 +535,7 @@ defmodule PlcRemote.Settings do
   end
 
   defp default_gpio_spec do
-    Application.get_env(:plc_remote, :default_service_gpio, "GPIO17")
+    Application.get_env(:plc_remote, :default_service_gpio, "GPIO23")
   end
 
   defp generate_service_psk do

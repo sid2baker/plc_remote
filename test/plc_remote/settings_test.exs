@@ -82,6 +82,8 @@ defmodule PlcRemote.SettingsTest do
     assert updated.uplink.regulatory_domain == "DE"
     assert updated.tailscale.hostname == "plant-remote-1"
     assert updated.tailscale.tags == ["tag:plc-gateway", "tag:plant-1"]
+    assert updated.service.gpio_spec == "PIN16"
+    assert updated.service.active_level == 0
     assert updated.service.hold_ms == 4_000
     assert updated.service.timeout_ms == 1_200_000
   end

@@ -241,6 +241,6 @@ defmodule PlcRemote.Configuration do
   defp rollback_path(path), do: path <> ".service-rollback"
 
   defp default_gpio_spec do
-    Application.get_env(:plc_remote, :default_service_gpio, "GPIO17")
+    Application.get_env(:plc_remote, :default_service_gpio, "GPIO23")
   end
 end

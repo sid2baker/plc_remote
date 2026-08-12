@@ -59,9 +59,9 @@ jobs:
             libmnl-dev \
             libncurses-dev \
             libssl-dev \
+            jq \
             openssh-client \
             pkg-config \
-            python3 \
             qemu-system-x86 \
             qemu-utils \
             squashfs-tools
@@ -111,12 +111,10 @@ jobs:
           hostname: plc-remote-ci-peer-${{ github.run_id }}
 
       - name: Fetch dependencies and build x86 firmware
-        run: mix ci.x86
+        run: test/firmware/build.sh build
 
       - name: Verify invalid key fails closed
-        env:
-          PLC_REMOTE_TAILNET_SKIP_BUILD: "1"
-        run: scripts/ci-tailnet-invalid.sh
+        run: mix test.invalid-key
 
       - name: Verify live enrollment, TCP proxy, and identity persistence
         env:
@@ -130,6 +128,5 @@ jobs:
           name: protected-tailnet-diagnostics
           path: |
             _build/qemu_tailnet/*.log
-            _build/qemu_tailnet_invalid/*.log
           if-no-files-found: ignore
           retention-days: 7

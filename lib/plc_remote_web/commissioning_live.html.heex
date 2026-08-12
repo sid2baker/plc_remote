@@ -394,7 +394,10 @@
       <div>
         <p class="eyebrow">ONSITE SERVICE</p><h2>Recovery access</h2>
       </div>
-      <p>These settings control the physical GPIO entry point and bounded recovery behavior.</p>
+      <p>
+        IPCBOX IN1 enables the WPA2 service AP only; it never selects Wi-Fi as an Internet uplink.
+        These settings control the hold time and bounded recovery behavior.
+      </p>
     </div>
 
     <.form for={%{}} as={:settings} phx-submit="save-advanced" autocomplete="off">
@@ -402,37 +405,32 @@
         Service GPIO unavailable: {@service.gpio_error}
       </div>
       <div class="form-grid two">
-        <label>GPIO specification<input
+        <label>IN1 GPIO specification<input
           name="settings[service_gpio_spec]"
-          value={value(@draft, "service_gpio_spec", @settings.service.gpio_spec)}
+          value={@settings.service.gpio_spec}
           required
-        /><.field_error errors={@errors} field="service_gpio_spec" /></label>
+          readonly
+        /><small>Waveshare IN1: GPIO23, active low after isolation.</small><.field_error
+          errors={@errors}
+          field="service_gpio_spec"
+        /></label>
         <label>
-          Active level
-          <select name="settings[service_active_level]">
+          IN1 active level
+          <select name="settings[service_active_level]" disabled>
             <option
               value="0"
-              selected={
-                selected?(
-                  value(@draft, "service_active_level", @settings.service.active_level),
-                  0
-                )
-              }
+              selected={selected?(@settings.service.active_level, 0)}
             >
               Low / 0
             </option>
             <option
               value="1"
-              selected={
-                selected?(
-                  value(@draft, "service_active_level", @settings.service.active_level),
-                  1
-                )
-              }
+              selected={selected?(@settings.service.active_level, 1)}
             >
               High / 1
             </option>
           </select>
+          <input type="hidden" name="settings[service_active_level]" value="0" />
         </label>
         <label>Hold time in seconds<input
           name="settings[service_hold_seconds]"

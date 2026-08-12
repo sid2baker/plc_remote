@@ -4,7 +4,7 @@ defmodule PlcRemote.Adapters.Target.GPIO do
   @behaviour PlcRemote.Adapters.GPIO
 
   @impl true
-  def open(gpio_spec) do
+  def open_input(gpio_spec) do
     with {:ok, gpio} <- gpio_call(:open, [gpio_spec, :input]),
          {:ok, reference} <- gpio_call(:subscribe, [gpio]) do
       {:ok, gpio, reference}
@@ -13,6 +13,14 @@ defmodule PlcRemote.Adapters.Target.GPIO do
 
   @impl true
   def read(gpio), do: gpio_call(:read, [gpio])
+
+  @impl true
+  def open_output(gpio_spec, initial_value) do
+    gpio_call(:open, [gpio_spec, :output, [initial_value: initial_value]])
+  end
+
+  @impl true
+  def write(gpio, value), do: gpio_call(:write, [gpio, value])
 
   @impl true
   def close(gpio), do: gpio_call(:close, [gpio])

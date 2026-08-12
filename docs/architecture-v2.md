@@ -74,6 +74,7 @@ Initial ownership:
 | `NetworkConfigurationInvalid` | `Network.Runtime` |
 | `InternetUnavailable` | `Network.Runtime` |
 | `PlcInterfaceUnavailable` | `Network.Runtime` |
+| `PanelIOUnavailable` | `Panel.Runtime` |
 | `TailscaleUnavailable` | `Tailscale.FSM` |
 | `TailscaleListenerUnavailable` | `Tailscale.FSM` |
 | `ServiceGPIOUnavailable` | `Service.GPIO` |
@@ -104,6 +105,9 @@ The v2 implementation preserves the product architecture:
 - every Ethernet application is disable-first and unassigned ports stay off;
 - PLC configuration has no gateway or DNS;
 - Wi-Fi is setup/recovery AP only;
+- IPCBOX IN1 can only enable the service AP and IN2 can only request a bounded
+  reconnect;
+- IPCBOX outputs initialize off and remain non-safety indications;
 - remote PLC access is one fixed userspace TCP destination, never routing, NAT,
   or bridging;
 - onsite configuration remains transactional;

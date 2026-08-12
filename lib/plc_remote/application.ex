@@ -9,6 +9,7 @@ defmodule PlcRemote.Application do
       PlcRemote.Configuration,
       {Phoenix.PubSub, name: PlcRemote.PubSub},
       PlcRemote.Health.Reporter,
+      PlcRemote.Panel.Runtime,
       PlcRemote.Network.Runtime,
       PlcRemote.Tailscale.Supervisor,
       PlcRemote.Service.Supervisor,

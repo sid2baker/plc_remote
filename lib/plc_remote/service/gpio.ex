@@ -9,7 +9,7 @@ defmodule PlcRemote.Service.GPIO do
 
   @spec open(map()) :: GPIOState.t()
   def open(service_settings) do
-    case adapter().open(service_settings.gpio_spec) do
+    case adapter().open_input(service_settings.gpio_spec) do
       {:ok, handle, reference} ->
         asserted? = adapter().read(handle) == service_settings.active_level
         Alarm.clear(ServiceGPIOUnavailable)
@@ -32,8 +32,9 @@ defmodule PlcRemote.Service.GPIO do
   def close(%GPIOState{handle: nil}), do: :ok
 
   def close(%GPIOState{handle: handle}) do
-    adapter().close(handle)
+    result = adapter().close(handle)
     Alarm.clear(ServiceGPIOUnavailable)
+    result
   end
 
   @spec update(GPIOState.t(), map(), term(), 0 | 1) :: GPIOState.t()

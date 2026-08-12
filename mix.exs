@@ -19,6 +19,10 @@ defmodule PlcRemote.MixProject do
       compilers: [:finitomata, :phoenix_live_view] ++ Mix.compilers(),
       releases: [{@app, release()}],
       dialyzer: [plt_add_apps: [:ex_unit]],
+      test_ignore_filters: [
+        &String.starts_with?(&1, "test/support/"),
+        &String.starts_with?(&1, "test/firmware/")
+      ],
       aliases: aliases()
     ]
   end
@@ -36,7 +40,7 @@ defmodule PlcRemote.MixProject do
   end
 
   defp elixirc_paths(:host), do: ["lib", "host"]
-  defp elixirc_paths(:x86_64), do: ["lib", "target", "integration/firmware"]
+  defp elixirc_paths(:x86_64), do: ["lib", "target", "test/firmware/support"]
   defp elixirc_paths(_target), do: ["lib", "target"]
 
   # Run "mix help deps" to learn about dependencies.
@@ -85,7 +89,11 @@ defmodule PlcRemote.MixProject do
       # version updates, please review their release notes in case
       # changes to your application are needed.
       {:nerves_system_x86_64, "~> 1.34", runtime: false, targets: :x86_64},
-      {:nerves_system_rpi4, "~> 2.0", runtime: false, targets: :rpi4},
+      {:plc_remote_system_rpi4,
+       path: "systems/plc_remote_system_rpi4",
+       runtime: false,
+       targets: :rpi4,
+       nerves: [compile: true]},
       {:plc_remote_system_rpi5,
        path: "systems/plc_remote_system_rpi5",
        runtime: false,
@@ -115,12 +123,13 @@ defmodule PlcRemote.MixProject do
       "assets.build": ["volt.build"],
       "assets.check": ["volt.js.check"],
       "deps.patch": ["cmd scripts/apply-dependency-patches.sh"],
-      "ci.x86": ["cmd scripts/ci-x86.sh build"],
-      "ci.qemu": ["cmd integration/qemu/run.sh"],
-      "ci.integration": ["cmd scripts/ci-integration.sh"],
-      "ci.tailnet": ["cmd scripts/ci-tailnet.sh"],
+      "test.firmware": ["cmd test/firmware/run.sh"],
+      "test.invalid-key": ["cmd test/firmware/invalid-key.sh"],
+      "ci.tailnet": ["cmd test/firmware/live.sh"],
       compile: ["deps.patch", "compile"],
-      firmware: ["deps.patch", "firmware"],
+      # Rustler writes into deps/tailscale/ts_elixir/priv, which is shared by
+      # Mix targets. Always rebuild this one NIF before assembling firmware.
+      firmware: ["deps.patch", "deps.compile tailscale --force", "firmware"],
       ci: [
         "assets.build",
         "compile --warnings-as-errors",
@@ -131,8 +140,7 @@ defmodule PlcRemote.MixProject do
         "dialyzer",
         "ex_dna --max-clones 0",
         "reach.check --arch --smells",
-        "cmd scripts/ci-integration.sh",
-        "cmd env PLC_REMOTE_TAILNET_SKIP_BUILD=1 scripts/ci-tailnet-invalid.sh"
+        "test.firmware"
       ]
     ]
   end

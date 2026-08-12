@@ -1,0 +1,6 @@
+/.nerves/
+/_build/
+/deps/
+/build.log
+/Config.in
+/fwup.conf

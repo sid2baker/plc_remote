@@ -97,15 +97,34 @@ alarm is set. Automatic reboot is suppressed when disabled, whenever firmware
 is not explicitly validated, after budget exhaustion, or when the updated
 budget cannot be persisted.
 
-## GPIO service mode
+## IPCBOX panel and service mode
 
-After commissioning, hold the configured physical input to start the bounded
-WPA2 service AP. Onsite edits are transactional. They commit only after final
-Ethernet and Tailscale verification. Exit, timeout, failure, process restart, or
-power loss restores the previous snapshot.
+After commissioning, hold isolated IN1 for three seconds to start the bounded
+WPA2 service AP. IN1 is GPIO23, active-low at the Pi (`PIN16` on CM5). This
+operation only enables `wlan0` AP mode; Wi-Fi station mode remains absent and
+Ethernet role ownership is unchanged.
 
-Delete settings only as an intentional factory-reset operation; the next boot
-returns to the open first-boot AP.
+IN2 (GPIO24 / CM5 `PIN18`) requests one Tailscale reconnect after a three-second
+hold and has a 30-second cooldown. It does not reset configuration or reboot.
+
+OUT1 indicates that the fixed Tailscale listener and successfully applied PLC
+Ethernet path are both ready. OUT2 indicates an active service AP. USER1 is lit
+for an enabled-but-unavailable remote path; USER2 is lit for a service GPIO/AP
+fault. Inspect the panel read model locally:
+
+```elixir
+PlcRemote.Panel.status()
+PlcRemote.Diagnostics.snapshot()
+```
+
+OUT1/OUT2 are open-drain indication outputs, not safety outputs. Keep loads
+within Waveshare's stated 150 V cutoff and 500 mA maximum, and engineer external
+flyback suppression, inrush, fusing, and isolation as applicable.
+
+Onsite edits are transactional. They commit only after final Ethernet and
+Tailscale verification. Exit, timeout, failure, process restart, or power loss
+restores the previous snapshot. Delete settings only as an intentional factory
+reset; the next boot returns to the open first-boot AP.
 
 ## OTA update procedure
 
@@ -153,19 +172,16 @@ validation, or add an explicit versioned backup/restore protocol.
 
 ## QEMU firmware validation
 
-Install QEMU x86_64, `qemu-img`, Python 3, and `fwup`, then add both Rust targets:
+Install QEMU x86_64, `qemu-img`, and `fwup`, then add the x86 Rust target:
 
 ```sh
-rustup target add aarch64-unknown-linux-gnu x86_64-unknown-linux-musl --toolchain 1.95.0
-mix ci.x86
-mix ci.qemu
-mix ci.integration
+rustup target add x86_64-unknown-linux-musl --toolchain 1.95.0
+mix test.firmware
 ```
 
-The project-wide `mix ci` runs this integration lane after the host quality
-gates. `mix ci.x86` builds the x86_64 Nerves firmware and inspects the packaged
-`ts_elixir.so`. `mix ci.qemu` creates and flashes a disposable disk, boots with
-one QEMU Internet NIC and one isolated PLC NIC, and checks:
+The project-wide `mix ci` runs this test after the host quality gates.
+`mix test.firmware` builds and inspects the x86_64 Nerves firmware, flashes a
+disposable disk, boots one Internet NIC and one isolated PLC NIC, and checks:
 
 - Nerves, BEAM, and the PLC Remote supervision tree start;
 - both virtio Ethernet interfaces are detected by fixed MAC and hardware path;
@@ -173,14 +189,13 @@ one QEMU Internet NIC and one isolated PLC NIC, and checks:
 - settings and distinct Ethernet roles apply through real VintageNet;
 - `Tailscale.Native.load_key_file/1` executes successfully inside Nerves;
 - QMP can drop and restore the PLC link;
-- an invalid auth key reaches no connected state or listener.
+- the PLC-bound TCP path reaches only the QEMU `/bin/cat` echo endpoint;
+- settings survive a graceful shutdown and restart of the same disk.
 
-Artifacts and serial logs are left in `_build/qemu_integration` on failure.
-These tests use no Tailscale secret. GitHub Actions runs the same lane with
-QEMU TCG on pushes and pull requests, uploads emulator logs even after failure,
-and retains successful x86 firmware temporarily. `mix ci.integration` builds
-once and then runs QEMU with the optional isolated, interface-bound TCP echo at
-`192.168.10.100:10102` through a restricted QEMU user network.
+Artifacts and serial logs are left in `_build/qemu_test` on failure. These
+tests use no Tailscale secret. GitHub Actions runs the same lane with QEMU TCG
+on pushes and pull requests, uploads emulator logs even after failure, and
+retains successful x86 firmware temporarily.
 
 The manual `Protected tailnet integration` workflow uses the GitHub environment
 `tailnet-integration`. Configure environment secrets `TS_OAUTH_CLIENT_ID` and

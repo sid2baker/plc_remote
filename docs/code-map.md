@@ -73,6 +73,19 @@ Network owns `NetworkConfigurationInvalid`, `InternetUnavailable`, and
 | `PlcRemote.Service.Supervisor` | One-for-all Phoenix, Bandit, runtime, and FSM boundary |
 | `PlcRemoteWeb.CommissioningLive` | Typed Service + Health + subsystem read-model presentation |
 
+## IPCBOX panel
+
+| Module | Responsibility |
+| --- | --- |
+| `PlcRemote.Panel.Runtime` | Owns IN2, OUT1/OUT2, and USER1/USER2 GPIO resources |
+| `PlcRemote.Panel.Policy` | Pure indicator/output levels from typed observations |
+| `PlcRemote.Panel.Status` | Non-secret panel and isolated-I/O read model |
+| `PlcRemote.Adapters.GPIO` | Input subscription and output write contract |
+
+IN1 remains owned by `Service.Runtime`. Panel outputs initialize to physical off
+before observations are applied. IN2 can request only a bounded Tailscale
+reconnect; it cannot trigger reboot or mutate settings.
+
 ## Recovery and firmware
 
 | Module | Responsibility |
@@ -95,6 +108,7 @@ PlcRemote.Supervisor (:rest_for_one)
 ├── Configuration
 ├── Phoenix.PubSub / Events
 ├── Health.Reporter
+├── Panel.Runtime
 ├── Network.Runtime
 ├── Tailscale.Supervisor (:one_for_all)
 ├── Service.Supervisor (:one_for_all)
@@ -116,6 +130,8 @@ PlcRemote.Supervisor (:rest_for_one)
 10. Keep onsite changes behind a power-loss-safe rollback transaction.
 11. Automatically reboot only validated firmware within the persisted budget.
 12. Keep operational status separate from Health alarms.
+13. Treat OUT1/OUT2 as non-safety indication outputs and initialize them off.
+14. Keep IN1 limited to service AP enablement and IN2 limited to reconnect.
 
 ## Validation
 
@@ -126,7 +142,6 @@ MIX_TARGET=rpi5 mix compile --force --warnings-as-errors
 ```
 
 `mix ci` includes host quality gates plus real x86 Nerves/QEMU boot,
-VintageNet, NIF, PLC-path, persistence, link-state, and invalid-enrollment
-coverage. Hardware-affecting changes additionally require UART-observed CM4/CM5
+VintageNet, NIF, PLC-path, persistence, and link-state coverage. Hardware-affecting changes additionally require UART-observed CM4/CM5
 boots, hardware-path confirmation, setup/GPIO AP checks, live-tailnet enrollment,
 and a real PLC proxy test.

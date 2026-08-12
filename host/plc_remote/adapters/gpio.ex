@@ -4,10 +4,16 @@ defmodule PlcRemote.Adapters.Host.GPIO do
   @behaviour PlcRemote.Adapters.GPIO
 
   @impl true
-  def open(_gpio_spec), do: {:error, :not_available_on_host}
+  def open_input(_gpio_spec), do: {:error, :not_available_on_host}
 
   @impl true
   def read(_gpio), do: 1
+
+  @impl true
+  def open_output(_gpio_spec, _initial_value), do: {:error, :not_available_on_host}
+
+  @impl true
+  def write(_gpio, _value), do: {:error, :not_available_on_host}
 
   @impl true
   def close(_gpio), do: :ok

@@ -4,6 +4,7 @@ defmodule PlcRemote.SupervisionTest do
   test "root starts Health and lifecycle runtimes after Configuration" do
     assert is_pid(Process.whereis(PlcRemote.Health.Reporter))
     assert is_pid(Process.whereis(PlcRemote.Network.Runtime))
+    assert is_pid(Process.whereis(PlcRemote.Panel.Runtime))
     assert is_pid(Process.whereis(PlcRemote.Recovery.Runtime))
     assert is_pid(Process.whereis(PlcRemote.Firmware.Runtime))
   end

@@ -6,6 +6,7 @@ defmodule PlcRemote.DiagnosticsTest do
 
     assert %PlcRemote.Firmware.Status{} = snapshot.firmware
     assert %PlcRemote.Network.Status{} = snapshot.network
+    assert %PlcRemote.Panel.Status{} = snapshot.panel
     assert %PlcRemote.Tailscale.Status{} = snapshot.tailscale
     assert %PlcRemote.Service.Status{} = snapshot.service
     assert %PlcRemote.Recovery.Status{} = snapshot.recovery

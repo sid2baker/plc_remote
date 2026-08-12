@@ -1,9 +1,10 @@
 # PLC Remote
 
 Nerves firmware for simple, fail-closed remote access to one industrial PLC. The
-primary CM5 platform is the
-[Waveshare IPCBOX-CM5-A](https://docs.waveshare.com/IPCBOX-CM5-A); the stock CM4
-`rpi4` target remains supported.
+primary platform is the
+[Waveshare IPCBOX-CM5-A](https://docs.waveshare.com/IPCBOX-CM5-A) populated with
+either a CM4 (`rpi4`) or CM5 (`rpi5`). Both targets use carrier-specific Nerves
+systems.
 
 PLC Remote has three physical network roles:
 
@@ -101,13 +102,30 @@ plc = PlcRemote.Configuration.current().machine.plc_address
 
 ## Recovery
 
-After commissioning, holding the configured physical input starts a WPA2,
-time-limited service AP. IPCBOX-CM5-A defaults are:
+After commissioning, holding IPCBOX IN1 starts a WPA2, time-limited service AP.
+It only enables `wlan0` AP mode for configuration; it never enables Wi-Fi station
+mode or changes either Ethernet role. Defaults are:
 
-- DI1 / `GPIO23`, active-low
+- IN1 / GPIO23 (CM5 label `PIN16`), active-low after isolation
 - 3-second hold
 - 15-minute inactivity timeout
 - `192.168.50.0/24`
+
+The remaining carrier I/O has deliberately narrow appliance semantics:
+
+- IN2 / GPIO24: hold 3 seconds to request one Tailscale reconnect, rate-limited
+  to once per 30 seconds. It cannot reboot, reset settings, or alter networking.
+- OUT1 / GPIO27: on only while the tailnet listener and resolved PLC Ethernet
+  path are both ready.
+- OUT2 / GPIO22: on only while the service AP is active.
+- USER1 / GPIO25: lit when enabled remote access is unavailable; off when
+  Tailscale is disabled or connected.
+- USER2 / GPIO26: lit on service GPIO/AP fault; off otherwise.
+
+OUT1/OUT2 are indication outputs only, not safety outputs. Waveshare specifies
+open-drain outputs (150 V cutoff, 500 mA maximum, 18 Ω on-resistance); external
+loads still require engineering for inrush, suppression, fusing, and the
+installation's electrical rules.
 
 Onsite setting changes are transactional. A snapshot at
 `/data/plc_remote/settings.json.service-rollback` is restored after exit,
@@ -141,16 +159,24 @@ transport.
 
 ## Hardware
 
-`MIX_TARGET=rpi5` uses
-[`systems/plc_remote_system_rpi5`](systems/plc_remote_system_rpi5), based on
-`nerves_system_rpi5` 2.1.1. It enables common USB 2.5G Ethernet drivers:
+`MIX_TARGET=rpi4` and `MIX_TARGET=rpi5` use
+[`systems/plc_remote_system_rpi4`](systems/plc_remote_system_rpi4) and
+[`systems/plc_remote_system_rpi5`](systems/plc_remote_system_rpi5). Both include
+the native Raspberry Pi Ethernet driver and common second-port drivers:
 
 - Realtek RTL8152/RTL8153/RTL8156 (`CONFIG_USB_RTL8152`)
 - ASIX AX88179/178A (`CONFIG_USB_NET_AX88179_178A`)
+- CDC Ethernet/NCM standards-based USB adapters
+- Realtek PCIe fallback (`CONFIG_R8169`)
 
-Confirm physical port paths, driver identity, and DI1 polarity on each intended
-carrier. A CM4 exposing only one Ethernet controller cannot provide both the
-Internet and isolated PLC roles without a second controller.
+VintageNet boots both `eth0` and `eth1` disabled, then PLC Remote assigns roles
+by discovered `/devices/...` hardware path. It never assumes which physical
+socket Linux names `eth0` or `eth1`, so enumeration differences between CM4 and
+CM5 cannot swap the Internet and PLC networks.
+
+Physical qualification must still confirm both ports, the actual 2.5G
+controller/driver, hardware paths, IN1/IN2 polarity, USER LED polarity, and
+OUT1/OUT2 electrical behavior on each production variant.
 
 ## Persistent state
 
@@ -208,15 +234,15 @@ MIX_TARGET=rpi4 mix firmware
 MIX_TARGET=rpi5 mix firmware
 MIX_TARGET=x86_64 mix firmware
 
-# Requires QEMU x86_64, qemu-img, fwup, and Python 3
-mix ci.integration
+# Boots and tests real x86_64 firmware in QEMU
+mix test.firmware
 ```
 
 The default `mix ci` finishes by running the deterministic QEMU lane. It boots
 the real x86_64 Nerves firmware with two fixed virtio Ethernet devices. It verifies OTP supervision, stable role paths,
-DHCP Internet, QMP link control, persistent settings, invalid-key fail-closed
-behavior, and real loading of the musl `tailscale-rs` Rustler NIF. It does not
-require a Tailscale credential.
+DHCP Internet, QMP link control, an isolated PLC echo, persistent settings, and
+real loading of the musl `tailscale-rs` Rustler NIF. It does not require a
+Tailscale credential.
 GitHub Actions runs the same secret-free lane under QEMU TCG on pushes and pull
 requests and retains QEMU logs and the x86 firmware as short-lived artifacts.
 Live enrollment and fixed-proxy interoperability run only from the manual

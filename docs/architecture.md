@@ -116,6 +116,7 @@ PlcRemote.Supervisor (:rest_for_one)
 ├── Configuration
 ├── Phoenix.PubSub / typed Events
 ├── Health.Reporter / Alarmist read model
+├── Panel.Runtime
 ├── Network.Runtime
 ├── Tailscale.Supervisor (:one_for_all)
 │   ├── connection Task.Supervisor
@@ -136,25 +137,33 @@ conditions; typed subsystem statuses answer current activity.
 
 ## Hardware validation
 
-The custom CM5 system enables common Realtek RTL815x and ASIX AX88179 USB
-Ethernet drivers. Production qualification must verify:
+Custom CM4 and CM5 systems enable the carrier's native Ethernet plus Realtek
+RTL815x, ASIX AX88179, and Realtek PCIe fallback drivers for the second port.
+Both interfaces start disabled and roles resolve only from stable hardware
+paths, never `eth0`/`eth1` ordering.
 
-- both physical Ethernet hardware paths and driver identity;
-- which connector is the site Internet port and which is the PLC port;
-- path stability across repeated boots;
-- DI1 GPIO identity and polarity;
+Waveshare documents IN1/IN2 as isolated active-low GPIO23/GPIO24, OUT1/OUT2 as
+open-drain channels controlled by GPIO27/GPIO22, and USER1/USER2 as active-low
+GPIO25/GPIO26 LEDs. PLC Remote uses IN1 only for the service AP, IN2 for a
+rate-limited reconnect request, OUT1 for complete remote PLC path readiness,
+OUT2 for active service access, USER1 for remote-access failure, and USER2 for
+service failure. PWR/ACT remain system-owned; STAT/NET remain 4G/5G-owned.
+
+Production qualification must verify:
+
+- both physical Ethernet hardware paths and loaded driver identity;
+- path stability and fail-closed role ownership across repeated boots;
+- all GPIO and external I/O polarities on CM4 and CM5;
+- OUT1/OUT2 load engineering and off-at-boot behavior;
 - fixed proxy behavior against a real PLC;
 - signed A/B OTA transport and rollback.
-
-A CM4 exposing only one Ethernet interface cannot satisfy the isolated two-port
-architecture without a second controller.
 
 ## x86_64 QEMU integration boundary
 
 `MIX_TARGET=x86_64` packages the same target networking, settings, supervision,
 and `tailscale-rs` adapters into `nerves_system_x86_64`. Only GPIO and automatic
 Wi-Fi commissioning are replaced: stock QEMU has neither a service WLAN nor a
-physical GPIO. Integration-only modules are compiled from `integration/firmware`
+physical GPIO. QEMU-only modules are compiled from `test/firmware/support`
 and are excluded from CM4/CM5 releases.
 
 The deterministic emulator topology is:
