@@ -60,7 +60,7 @@ jobs:
 
       - name: Install pinned language and firmware tools
         run: |
-          mise plugins install fwup https://github.com/nerves-project/asdf-fwup.git
+          mise plugins install fwup https://github.com/fwup-home/asdf-fwup.git
           mise install
 
       - name: Restore dependency and build caches
