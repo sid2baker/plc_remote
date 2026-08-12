@@ -32,9 +32,15 @@ cleanup() {
     kill "$plc_pid" 2>/dev/null || true
     wait "$plc_pid" 2>/dev/null || true
   fi
+
+  pid=""
+  plc_pid=""
+  return 0
 }
 
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 for command in fwup python3 qemu-img qemu-system-x86_64; do
   require "$command"
@@ -178,3 +184,9 @@ printf '%s\n' "$persisted" | grep -q 'machine_lan: "eth1"'
 printf '%s\n' "$persisted" | grep -q 'plc_address: "192.168.10.100"'
 
 echo "QEMU Nerves boot, persistent settings, Internet Ethernet, dual roles, observed link cycling, optional PLC echo, and tailscale-rs NIF smoke passed"
+
+# dash, used as /bin/sh on Ubuntu CI, can propagate a trap's last command
+# status differently from local shells. Make successful teardown explicit.
+cleanup
+trap - EXIT INT TERM
+exit 0
