@@ -4,9 +4,13 @@ defmodule PlcRemote.NetworkManagerTest do
   alias PlcRemote.{NetworkManager, ServiceMode}
 
   test "exposes connectivity and supports explicit recovery operations" do
+    original = PlcRemote.Configuration.get()
+    on_exit(fn -> PlcRemote.Configuration.restore(original) end)
+
     refute ServiceMode.active?()
+    assert :ok = PlcRemote.Configuration.restore(PlcRemote.Settings.defaults())
     assert :ok = NetworkManager.reapply()
-    assert :ok = NetworkManager.cycle_uplinks()
+    assert {:error, :internet_uplink_unassigned} = NetworkManager.cycle_uplink()
 
     status = NetworkManager.status()
     assert status.connection == :internet

@@ -2,7 +2,7 @@ defmodule PlcRemote do
   @moduledoc """
   Remote-access gateway firmware for industrial PLC networks.
 
-  The gateway keeps the machine LAN separate from its Internet uplinks and
+  The gateway keeps the PLC LAN separate from its Ethernet Internet uplink and
   exposes one configured PLC TCP endpoint through a Tailscale userspace proxy.
   """
 

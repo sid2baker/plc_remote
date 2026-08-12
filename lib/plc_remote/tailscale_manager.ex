@@ -5,15 +5,15 @@ defmodule PlcRemote.TailscaleManager do
   This is intentionally not a subnet router. An authorized tailnet client
   connects to the gateway's tailnet IPv4 address and configured listener port;
   the gateway opens the one configured PLC destination on the isolated LAN.
+  Before the PLC role is provisioned, the device may join the tailnet but does
+  not open the proxy listener.
   """
 
   use GenServer
 
   require Logger
 
-  alias PlcRemote.{Commissioning, Configuration, RetryPolicy}
-
-  @commission_retry_ms 5_000
+  alias PlcRemote.{Configuration, RetryPolicy}
   @connect_timeout_ms 60_000
 
   @doc false
@@ -46,6 +46,7 @@ defmodule PlcRemote.TailscaleManager do
        destination: destination(settings),
        device: nil,
        listener: nil,
+       proxy_ifname: nil,
        connect_task: nil,
        listener_task: nil,
        connect_timer: nil,
@@ -83,6 +84,14 @@ defmodule PlcRemote.TailscaleManager do
   @impl GenServer
   def handle_info(:configure, state) do
     {:noreply, configure(state, nil)}
+  end
+
+  def handle_info({:machine_interface_changed, machine_ifname}, state) do
+    if machine_interface_changed?(state, machine_ifname) do
+      {:noreply, configure(state, state.pending_auth_key)}
+    else
+      {:noreply, state}
+    end
   end
 
   def handle_info({:settings_updated, settings, auth_key}, state) do
@@ -142,12 +151,6 @@ defmodule PlcRemote.TailscaleManager do
     {:noreply, configure(state, state.pending_auth_key)}
   end
 
-  def handle_info(:complete_commissioning, %{state: :connected} = state) do
-    {:noreply, maybe_complete_commissioning(state)}
-  end
-
-  def handle_info(:complete_commissioning, state), do: {:noreply, state}
-
   def handle_info(_message, state), do: {:noreply, state}
 
   @impl GenServer
@@ -160,20 +163,48 @@ defmodule PlcRemote.TailscaleManager do
     state = stop_connection(state)
     settings = state.settings
 
-    if settings.tailscale.enabled do
-      start_connection(state, auth_key)
-    else
-      %{
-        state
-        | state: :disabled,
-          reason: nil,
-          listen_port: settings.tailscale.listen_port,
-          destination: destination(settings),
-          failure_count: 0,
-          connected_since: nil,
-          pending_auth_key: nil
-      }
+    cond do
+      not settings.tailscale.enabled ->
+        %{
+          state
+          | state: :disabled,
+            reason: nil,
+            listen_port: settings.tailscale.listen_port,
+            destination: destination(settings),
+            failure_count: 0,
+            connected_since: nil,
+            pending_auth_key: nil
+        }
+
+      internet_available?() ->
+        start_connection(state, auth_key)
+
+      true ->
+        wait_for_internet(state, auth_key)
     end
+  end
+
+  defp wait_for_internet(state, auth_key) do
+    retry_delay = 5_000
+    retry_timer = Process.send_after(self(), :retry_connection, retry_delay)
+
+    %{
+      state
+      | state: :waiting_for_network,
+        reason: "Waiting for Internet",
+        listen_port: state.settings.tailscale.listen_port,
+        destination: destination(state.settings),
+        retry_timer: retry_timer,
+        retry_at: System.monotonic_time(:millisecond) + retry_delay,
+        connected_since: nil,
+        pending_auth_key: auth_key || state.pending_auth_key
+    }
+  end
+
+  defp internet_available? do
+    PlcRemote.NetworkManager.status().connection == :internet
+  catch
+    :exit, _reason -> false
   end
 
   defp start_connection(state, auth_key) do
@@ -201,40 +232,60 @@ defmodule PlcRemote.TailscaleManager do
 
   defp handle_connect_result(state, {:ok, device, listener, tailnet_ipv4}) do
     settings = state.settings
-    adapter = state.adapter
+    machine_ifname = machine_ifname()
 
-    task =
-      Task.Supervisor.async_nolink(PlcRemote.TailscaleConnectionTaskSupervisor, fn ->
-        accept_loop(
-          adapter,
-          listener,
-          settings.machine.plc_address,
-          settings.tailscale.destination_port
-        )
-      end)
+    if is_nil(listener) and is_binary(machine_ifname) do
+      connection_failed(state, :plc_listener_unavailable)
+    else
+      task = maybe_start_listener(state.adapter, listener, settings, machine_ifname)
+      log_connected(tailnet_ipv4, listener, settings)
 
-    Logger.info(
-      "Tailscale PLC proxy listening on #{format_ip(tailnet_ipv4)}:#{settings.tailscale.listen_port} " <>
-        "for #{destination(settings)}"
-    )
-
-    state
-    |> Map.put(:state, :connected)
-    |> Map.put(:reason, nil)
-    |> Map.put(:tailnet_ipv4, format_ip(tailnet_ipv4))
-    |> Map.put(:device, device)
-    |> Map.put(:listener, listener)
-    |> Map.put(:listener_task, task)
-    |> Map.put(:failure_count, 0)
-    |> Map.put(:connected_since, System.monotonic_time(:millisecond))
-    |> Map.put(:retry_at, nil)
-    |> Map.put(:pending_auth_key, nil)
-    |> maybe_complete_commissioning()
+      state
+      |> Map.put(:state, :connected)
+      |> Map.put(:reason, nil)
+      |> Map.put(:tailnet_ipv4, format_ip(tailnet_ipv4))
+      |> Map.put(:device, device)
+      |> Map.put(:listener, listener)
+      |> Map.put(:proxy_ifname, listener_ifname(listener, machine_ifname))
+      |> Map.put(:listener_task, task)
+      |> Map.put(:failure_count, 0)
+      |> Map.put(:connected_since, System.monotonic_time(:millisecond))
+      |> Map.put(:retry_at, nil)
+      |> Map.put(:pending_auth_key, nil)
+    end
   end
 
   defp handle_connect_result(state, {:error, reason}), do: connection_failed(state, reason)
 
-  defp accept_loop(adapter, listener, address, port) do
+  defp maybe_start_listener(_adapter, nil, _settings, _machine_ifname), do: nil
+
+  defp maybe_start_listener(adapter, listener, settings, machine_ifname)
+       when is_binary(machine_ifname) do
+    Task.Supervisor.async_nolink(PlcRemote.TailscaleConnectionTaskSupervisor, fn ->
+      accept_loop(
+        adapter,
+        listener,
+        settings.machine.plc_address,
+        settings.tailscale.destination_port,
+        machine_ifname
+      )
+    end)
+  end
+
+  defp maybe_start_listener(_adapter, _listener, _settings, nil), do: nil
+
+  defp log_connected(tailnet_ipv4, nil, _settings) do
+    Logger.info("Tailscale joined at #{format_ip(tailnet_ipv4)}; PLC proxy is not configured")
+  end
+
+  defp log_connected(tailnet_ipv4, _listener, settings) do
+    Logger.info(
+      "Tailscale PLC proxy listening on #{format_ip(tailnet_ipv4)}:#{settings.tailscale.listen_port} " <>
+        "for #{destination(settings)}"
+    )
+  end
+
+  defp accept_loop(adapter, listener, address, port, machine_ifname) do
     case adapter.accept(listener) do
       {:ok, stream} ->
         Logger.info(
@@ -243,39 +294,14 @@ defmodule PlcRemote.TailscaleManager do
 
         {:ok, _pid} =
           Task.Supervisor.start_child(PlcRemote.TailscaleSessionTaskSupervisor, fn ->
-            PlcRemote.TcpProxy.relay(stream, address, port, adapter)
+            PlcRemote.TcpProxy.relay(stream, address, port, machine_ifname, adapter)
           end)
 
-        accept_loop(adapter, listener, address, port)
+        accept_loop(adapter, listener, address, port, machine_ifname)
 
       {:error, reason} ->
         {:error, reason}
     end
-  end
-
-  defp maybe_complete_commissioning(%{settings: %{commissioned: true}} = state), do: state
-
-  defp maybe_complete_commissioning(state) do
-    if network_ready_for_remote_access?(state.settings) do
-      case Configuration.mark_commissioned() do
-        :ok -> %{state | settings: Map.put(state.settings, :commissioned, true)}
-        {:error, _reason} -> schedule_commissioning_retry(state)
-      end
-    else
-      schedule_commissioning_retry(state)
-    end
-  end
-
-  defp network_ready_for_remote_access?(settings) do
-    status = PlcRemote.NetworkManager.status()
-    Commissioning.network_ready?(settings, status)
-  catch
-    :exit, _reason -> false
-  end
-
-  defp schedule_commissioning_retry(state) do
-    Process.send_after(self(), :complete_commissioning, @commission_retry_ms)
-    state
   end
 
   defp connection_failed(state, reason) do
@@ -283,7 +309,7 @@ defmodule PlcRemote.TailscaleManager do
     retry_delay = RetryPolicy.delay(failure_count)
 
     Logger.warning(
-      "Tailscale PLC proxy unavailable: #{inspect(reason)}; " <>
+      "Tailscale connection unavailable: #{inspect(reason)}; " <>
         "retrying in #{div(retry_delay, 1_000)} seconds"
     )
 
@@ -312,6 +338,7 @@ defmodule PlcRemote.TailscaleManager do
       state
       | device: nil,
         listener: nil,
+        proxy_ifname: nil,
         connect_task: nil,
         listener_task: nil,
         connect_timer: nil,
@@ -375,11 +402,32 @@ defmodule PlcRemote.TailscaleManager do
   defp task_reference(%Task{ref: reference}), do: reference
 
   defp connection_settings(settings) do
-    {settings.tailscale, settings.machine.plc_address, settings.uplink}
+    {
+      settings.tailscale,
+      settings.machine,
+      settings.uplink.mode,
+      settings.uplink.ethernet
+    }
   end
 
   defp destination(settings) do
     "#{settings.machine.plc_address}:#{settings.tailscale.destination_port}"
+  end
+
+  defp machine_interface_changed?(%{state: :connected} = state, machine_ifname) do
+    state.settings.machine.enabled and machine_ifname != state.proxy_ifname
+  end
+
+  defp machine_interface_changed?(_state, _machine_ifname), do: false
+
+  defp listener_ifname(nil, _machine_ifname), do: nil
+  defp listener_ifname(_listener, machine_ifname), do: machine_ifname
+
+  defp machine_ifname do
+    network = PlcRemote.NetworkManager.status()
+    PlcRemote.ProxyPolicy.machine_ifname(Configuration.get(), network)
+  catch
+    :exit, _reason -> nil
   end
 
   defp format_remote({address, port}), do: "#{format_ip(address)}:#{port}"

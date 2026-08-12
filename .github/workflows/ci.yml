@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host-and-qemu:
+    name: Host quality gates and x86 Nerves/QEMU
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    env:
+      PLC_REMOTE_QEMU_ACCELERATOR: tcg
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Nerves and QEMU system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            autoconf \
+            automake \
+            binutils \
+            build-essential \
+            clang \
+            cmake \
+            curl \
+            file \
+            git \
+            help2man \
+            libarchive-dev \
+            libconfuse-dev \
+            libmnl-dev \
+            libncurses-dev \
+            libssl-dev \
+            openssh-client \
+            pkg-config \
+            python3 \
+            qemu-system-x86 \
+            qemu-utils \
+            squashfs-tools
+
+      - name: Install mise
+        uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
+        with:
+          install: false
+          cache: true
+
+      - name: Install pinned language and firmware tools
+        run: |
+          mise plugins install fwup https://github.com/nerves-project/asdf-fwup.git
+          mise install
+
+      - name: Restore dependency and build caches
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            deps
+            _build
+            ~/.cache/cargo
+            deps/tailscale/target
+            ~/.cargo/git
+            ~/.cargo/registry
+            ~/.hex
+            ~/.local/share/nerves
+          key: ${{ runner.os }}-plc-remote-${{ hashFiles('.tool-versions', 'mix.lock', 'mix.exs', 'patches/**') }}
+          restore-keys: |
+            ${{ runner.os }}-plc-remote-
+
+      - name: Install Rust target and Mix tooling
+        run: |
+          rustup target add x86_64-unknown-linux-musl --toolchain 1.95.0
+          mix local.hex --force
+          mix local.rebar --force
+          mix archive.install hex nerves_bootstrap --force
+          mkdir -p ~/.ssh
+          ssh-keygen -q -t ed25519 -N '' -f ~/.ssh/id_ed25519
+
+      - name: Fetch host dependencies
+        run: mix deps.get
+
+      - name: Run complete host and deterministic firmware gate
+        run: mix ci
+
+      - name: Upload QEMU diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: qemu-diagnostics
+          path: |
+            _build/qemu_integration/*.log
+            _build/qemu_integration/*.port
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload x86 integration firmware
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: plc-remote-x86-firmware
+          path: _build/x86_64_dev/nerves/images/plc_remote.fw
+          if-no-files-found: error
+          retention-days: 14

@@ -9,7 +9,7 @@ defmodule PlcRemote.Settings do
 
   import Bitwise
 
-  @version 3
+  @version 4
   @default_service_address "192.168.50.1"
 
   @typedoc "Gateway settings with atom keys and normalized enum values."
@@ -26,7 +26,7 @@ defmodule PlcRemote.Settings do
   @typedoc "Form validation errors keyed by field name."
   @type errors :: %{String.t() => String.t()}
 
-  @doc "Builds secure defaults with the machine LAN, uplinks, and Tailscale disabled."
+  @doc "Builds secure defaults with both Ethernet roles and Tailscale disabled."
   @spec defaults(keyword()) :: t()
   def defaults(opts \\ []) do
     %{
@@ -42,8 +42,7 @@ defmodule PlcRemote.Settings do
       uplink: %{
         mode: :disabled,
         regulatory_domain: "00",
-        ethernet: Map.put(default_ip_config(), :interface_hw_path, ""),
-        wifi: Map.merge(default_ip_config(), %{ssid: "", psk: ""})
+        ethernet: Map.put(default_ip_config(), :interface_hw_path, "")
       },
       recovery: %{
         auto_reboot: true,
@@ -137,7 +136,7 @@ defmodule PlcRemote.Settings do
 
   defp uplink_settings(current, params) do
     %{
-      mode: enum_param(params, "uplink_mode", current.mode, [:disabled, :auto, :ethernet, :wifi]),
+      mode: uplink_mode(params, current.mode),
       regulatory_domain:
         params
         |> param("regulatory_domain", current.regulatory_domain)
@@ -152,14 +151,7 @@ defmodule PlcRemote.Settings do
             "ethernet_interface_hw_path",
             current.ethernet.interface_hw_path
           )
-        ),
-      wifi:
-        current.wifi
-        |> ip_settings("wifi", params)
-        |> Map.merge(%{
-          ssid: param(params, "wifi_ssid", current.wifi.ssid),
-          psk: secret_param(params, "wifi_psk", current.wifi.psk)
-        })
+        )
     }
   end
 
@@ -226,7 +218,7 @@ defmodule PlcRemote.Settings do
     |> validate_machine(settings.machine)
     |> validate_uplink(settings.uplink)
     |> validate_interface_roles(settings)
-    |> validate_tailscale(settings.tailscale, settings.machine, settings.uplink)
+    |> validate_tailscale(settings.tailscale, settings.uplink)
     |> validate_service(settings.service)
     |> validate_recovery(settings.recovery)
     |> validate_network_separation(settings)
@@ -258,8 +250,6 @@ defmodule PlcRemote.Settings do
     errors
     |> validate_regulatory_domain(uplink.regulatory_domain)
     |> validate_ip_config("ethernet", uplink.ethernet)
-    |> validate_ip_config("wifi", uplink.wifi)
-    |> validate_wifi(uplink)
   end
 
   defp validate_regulatory_domain(errors, domain) do
@@ -280,24 +270,10 @@ defmodule PlcRemote.Settings do
     |> require_ip("#{prefix}_name_server", config.name_server)
   end
 
-  defp validate_wifi(errors, %{mode: mode}) when mode in [:disabled, :ethernet], do: errors
-
-  defp validate_wifi(errors, %{mode: :auto, wifi: %{ssid: ""}}), do: errors
-
-  defp validate_wifi(errors, %{mode: :wifi, wifi: %{ssid: ""}}) do
-    Map.put(errors, "wifi_ssid", "is required when Wi-Fi is the selected uplink")
-  end
-
-  defp validate_wifi(errors, %{wifi: %{psk: psk}}) when byte_size(psk) in 8..63, do: errors
-
-  defp validate_wifi(errors, _uplink) do
-    Map.put(errors, "wifi_psk", "must contain 8 to 63 characters")
-  end
-
   defp validate_interface_roles(errors, settings) do
     machine_path = settings.machine.interface_hw_path
     wired_path = settings.uplink.ethernet.interface_hw_path
-    wired_active? = settings.uplink.mode in [:auto, :ethernet]
+    wired_active? = settings.uplink.mode == :ethernet
 
     errors =
       errors
@@ -335,7 +311,7 @@ defmodule PlcRemote.Settings do
 
   defp require_assigned_path(errors, _field, _path, false), do: errors
 
-  defp validate_tailscale(errors, tailscale, machine, uplink) do
+  defp validate_tailscale(errors, tailscale, uplink) do
     errors =
       errors
       |> validate_hostname(tailscale.hostname)
@@ -343,15 +319,10 @@ defmodule PlcRemote.Settings do
       |> require_port("tailscale_listen_port", tailscale.listen_port)
       |> require_port("plc_destination_port", tailscale.destination_port)
 
-    cond do
-      tailscale.enabled and not machine.enabled ->
-        Map.put(errors, "tailscale_enabled", "requires the machine LAN to be enabled")
-
-      tailscale.enabled and uplink.mode == :disabled ->
-        Map.put(errors, "tailscale_enabled", "requires an Internet uplink")
-
-      true ->
-        errors
+    if tailscale.enabled and uplink.mode == :disabled do
+      Map.put(errors, "tailscale_enabled", "requires an Internet uplink")
+    else
+      errors
     end
   end
 
@@ -399,10 +370,7 @@ defmodule PlcRemote.Settings do
   end
 
   defp validate_network_separation(errors, settings) do
-    uplink_networks =
-      []
-      |> add_static_uplink("ethernet_address", settings.uplink.ethernet)
-      |> add_static_uplink("wifi_address", settings.uplink.wifi)
+    uplink_networks = add_static_uplink([], "ethernet_address", settings.uplink.ethernet)
 
     configured_networks = [
       {"machine_address", settings.machine.enabled, settings.machine} | uplink_networks
@@ -528,6 +496,18 @@ defmodule PlcRemote.Settings do
     address &&& mask
   end
 
+  defp uplink_mode(params, current_mode) do
+    case Map.fetch(params, "uplink_mode") do
+      {:ok, mode} when mode in ["ethernet", :ethernet] -> :ethernet
+      {:ok, mode} when mode in ["disabled", :disabled] -> :disabled
+      {:ok, _unsupported} -> :disabled
+      :error -> normalize_uplink_mode(current_mode)
+    end
+  end
+
+  defp normalize_uplink_mode(:ethernet), do: :ethernet
+  defp normalize_uplink_mode(_legacy_or_disabled), do: :disabled
+
   defp default_ip_config do
     %{
       method: :dhcp,
@@ -558,7 +538,6 @@ defmodule PlcRemote.Settings do
     machine = Map.get(value, "machine", %{})
     uplink = Map.get(value, "uplink", %{})
     ethernet = Map.get(uplink, "ethernet", %{})
-    wifi = Map.get(uplink, "wifi", %{})
     tailscale = Map.get(value, "tailscale", %{})
     service = Map.get(value, "service", %{})
     recovery = Map.get(value, "recovery", %{})
@@ -569,7 +548,7 @@ defmodule PlcRemote.Settings do
       "machine_address" => Map.get(machine, "address"),
       "machine_prefix_length" => Map.get(machine, "prefix_length"),
       "plc_address" => Map.get(machine, "plc_address"),
-      "uplink_mode" => Map.get(uplink, "mode"),
+      "uplink_mode" => stored_uplink_mode(uplink),
       "regulatory_domain" => Map.get(uplink, "regulatory_domain"),
       "ethernet_interface_hw_path" => Map.get(ethernet, "interface_hw_path"),
       "ethernet_method" => Map.get(ethernet, "method"),
@@ -577,14 +556,7 @@ defmodule PlcRemote.Settings do
       "ethernet_prefix_length" => Map.get(ethernet, "prefix_length"),
       "ethernet_gateway" => Map.get(ethernet, "gateway"),
       "ethernet_name_server" => Map.get(ethernet, "name_server"),
-      "wifi_ssid" => Map.get(wifi, "ssid"),
-      "wifi_psk" => Map.get(wifi, "psk"),
-      "wifi_method" => Map.get(wifi, "method"),
-      "wifi_address" => Map.get(wifi, "address"),
-      "wifi_prefix_length" => Map.get(wifi, "prefix_length"),
-      "wifi_gateway" => Map.get(wifi, "gateway"),
-      "wifi_name_server" => Map.get(wifi, "name_server"),
-      "tailscale_enabled" => Map.get(tailscale, "enabled"),
+      "tailscale_enabled" => stored_tailscale_enabled(uplink, tailscale),
       "tailscale_hostname" => Map.get(tailscale, "hostname"),
       "tailscale_tags" => join_tags(Map.get(tailscale, "tags")),
       "tailscale_listen_port" => Map.get(tailscale, "listen_port"),
@@ -613,8 +585,25 @@ defmodule PlcRemote.Settings do
     end
   end
 
+  defp stored_uplink_mode(%{"mode" => mode}) when mode in ["ethernet", :ethernet],
+    do: "ethernet"
+
+  defp stored_uplink_mode(%{"mode" => mode, "ethernet" => ethernet})
+       when mode in ["auto", :auto] do
+    if Map.get(ethernet, "interface_hw_path") in [nil, ""], do: "disabled", else: "ethernet"
+  end
+
+  defp stored_uplink_mode(_uplink), do: "disabled"
+
+  defp stored_tailscale_enabled(uplink, tailscale) do
+    stored_uplink_mode(uplink) == "ethernet" and Map.get(tailscale, "enabled") == true
+  end
+
   defp stored_commissioned(value) do
-    stored_version(value) >= 2 and Map.get(value, "commissioned") == true
+    uplink = Map.get(value, "uplink", %{})
+
+    stored_version(value) >= 2 and Map.get(value, "commissioned") == true and
+      stored_uplink_mode(uplink) == "ethernet"
   end
 
   defp stored_version(value) do

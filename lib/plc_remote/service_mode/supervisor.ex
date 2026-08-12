@@ -18,6 +18,7 @@ defmodule PlcRemote.ServiceMode.Supervisor do
   @impl Supervisor
   def init(_opts) do
     children = [
+      PlcRemote.ServiceMode.WebRuntimeSupervisor,
       PlcRemote.ServiceMode.WebSupervisor,
       PlcRemote.ServiceMode
     ]

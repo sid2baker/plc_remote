@@ -19,18 +19,44 @@ defmodule PlcRemote.SupervisionTest do
            end)
   end
 
-  test "service boundary cannot leave a stale web supervisor behind" do
+  test "service boundary restores an active onsite AP after a manager crash" do
+    original = PlcRemote.Configuration.get()
+
+    on_exit(fn ->
+      if service_active?(), do: PlcRemote.ServiceMode.deactivate()
+      PlcRemote.Configuration.restore(original)
+    end)
+
+    :ok = PlcRemote.Configuration.restore(%{original | commissioned: true})
+    assert :ok = PlcRemote.ServiceMode.activate()
+
     previous_service = Process.whereis(PlcRemote.ServiceMode)
     previous_web = Process.whereis(PlcRemote.ServiceMode.WebSupervisor)
+    previous_runtime = Process.whereis(PlcRemote.ServiceMode.WebRuntimeSupervisor)
     Process.exit(previous_service, :kill)
 
     assert eventually(fn ->
              service = Process.whereis(PlcRemote.ServiceMode)
              web = Process.whereis(PlcRemote.ServiceMode.WebSupervisor)
+             runtime = Process.whereis(PlcRemote.ServiceMode.WebRuntimeSupervisor)
+             status = if is_pid(service), do: service_status(), else: %{}
 
-             is_pid(service) and is_pid(web) and service != previous_service and
-               web != previous_web
+             is_pid(service) and is_pid(web) and is_pid(runtime) and service != previous_service and
+               web != previous_web and runtime != previous_runtime and status[:active] and
+               status[:mode] == :recovery
            end)
+  end
+
+  defp service_active? do
+    PlcRemote.ServiceMode.active?()
+  catch
+    :exit, _reason -> false
+  end
+
+  defp service_status do
+    PlcRemote.ServiceMode.status()
+  catch
+    :exit, _reason -> %{}
   end
 
   defp tailscale_processes do

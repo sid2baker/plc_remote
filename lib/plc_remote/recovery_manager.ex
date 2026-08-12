@@ -3,7 +3,7 @@ defmodule PlcRemote.RecoveryManager do
   Escalates prolonged loss of remote access without creating reboot loops.
 
   The manager starts with inexpensive Tailscale reconnects, then reapplies and
-  cycles uplinks, then restarts the complete Tailscale boundary. A full device
+  cycles the Ethernet uplink, then restarts the complete Tailscale boundary. A full device
   reboot is the final action and has a persistent consecutive-reboot budget.
   Service mode, uncommissioned devices, disabled Tailscale, and unvalidated
   firmware suppress automatic reboots.
@@ -150,9 +150,9 @@ defmodule PlcRemote.RecoveryManager do
     complete(state, action)
   end
 
-  defp perform(:cycle_uplinks = action, state) do
-    Logger.warning("Recovery stage: cycling Internet uplinks")
-    _result = PlcRemote.NetworkManager.cycle_uplinks()
+  defp perform(:cycle_uplink = action, state) do
+    Logger.warning("Recovery stage: cycling the Ethernet Internet uplink")
+    _result = PlcRemote.NetworkManager.cycle_uplink()
     complete(state, action)
   end
 
@@ -236,7 +236,7 @@ defmodule PlcRemote.RecoveryManager do
     %{
       reconnect: min(120_000, div(reboot, 6)),
       reapply_network: min(300_000, div(reboot, 4)),
-      cycle_uplinks: min(900_000, div(reboot, 2)),
+      cycle_uplink: min(900_000, div(reboot, 2)),
       restart_tailscale: min(1_800_000, div(reboot * 3, 4)),
       reboot: reboot
     }

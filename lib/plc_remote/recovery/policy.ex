@@ -7,8 +7,8 @@ defmodule PlcRemote.Recovery.Policy do
   directly to a reboot.
   """
 
-  @type action :: :reconnect | :reapply_network | :cycle_uplinks | :restart_tailscale | :reboot
-  @actions [:reconnect, :reapply_network, :cycle_uplinks, :restart_tailscale, :reboot]
+  @type action :: :reconnect | :reapply_network | :cycle_uplink | :restart_tailscale | :reboot
+  @actions [:reconnect, :reapply_network, :cycle_uplink, :restart_tailscale, :reboot]
 
   @doc "Returns the next due action, or `nil` when no new action is due."
   @spec next_action(non_neg_integer(), MapSet.t(action()), %{action() => non_neg_integer()}) ::

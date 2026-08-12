@@ -1,94 +1,99 @@
 # PLC Remote code map
 
-This document answers “where should this change go?” without requiring a reader
-to reconstruct the OTP tree first.
-
-## Configuration boundary
+## Configuration
 
 | Module | Responsibility |
 | --- | --- |
-| `PlcRemote.Settings` | Pure defaults, form normalization, migration, and complete validation |
-| `PlcRemote.Settings.Store` | Owner-only atomic JSON file operations |
-| `PlcRemote.Configuration` | The only process allowed to own, persist, and publish settings |
-| `PlcRemote.Commissioning` | Pure rules deciding whether first-boot setup is required and safe to complete |
+| `PlcRemote.Settings` | Defaults, v4 migration, parameter normalization, complete validation |
+| `PlcRemote.Settings.Store` | Atomic owner-only JSON storage |
+| `PlcRemote.Configuration` | Settings ownership, publication, and onsite rollback transaction |
+| `PlcRemote.Commissioning` | Pure Ethernet/Tailscale final-check rules |
 
-Authentication keys are transient values returned separately from settings.
-Only `Configuration` may set the persisted `commissioned` marker.
+Only `Configuration` persists the commissioned marker. Tailscale auth keys are
+returned separately from settings and remain transient.
 
-## Network boundary
+## Networking
 
 | Module | Responsibility |
 | --- | --- |
-| `PlcRemote.Network` | Pure VintageNet configuration builders and hardware-path role resolution |
-| `PlcRemote.NetworkManager` | Disable-first application of network intent and hardware refresh |
-| `PlcRemote.Adapters.Network` | Contract between application logic and a networking implementation |
-| `PlcRemote.Adapters.Target.Network` | Serialized VintageNet calls, bounded transition waits, and target diagnostics |
-| `PlcRemote.Adapters.Host.Network` | Deterministic development hardware model |
-| `PlcRemote.RecoveryManager` | Bounded reconnect, network-cycle, supervisor-restart, and reboot escalation |
-| `PlcRemote.Recovery.Policy` | Pure least-disruptive escalation ordering |
-| `PlcRemote.Recovery.Safety` | Pure reboot budget and firmware escape-hatch checks |
-| `PlcRemote.Recovery.Store` | Independent owner-only persistent reboot budget |
+| `PlcRemote.Network` | Pure Ethernet role resolution plus PLC/service configurations |
+| `PlcRemote.NetworkManager` | Disable-first Ethernet application and hardware refresh |
+| `PlcRemote.Adapters.Network` | Application/target networking contract |
+| `PlcRemote.Adapters.Target.Network` | Serialized VintageNet configuration and diagnostics |
+| `PlcRemote.Adapters.Host.Network` | Deterministic host hardware model |
+| `PlcRemote.Integration` | x86-only serial test commands for real Nerves/QEMU boundaries |
+| `integration/qemu/run.sh` | fwup disk, QEMU topology, console assertions, and QMP link control |
 
-Do not call VintageNet from application modules. The target adapter serializes
-calls because VintageNet cannot accept a new configuration while an interface is
-in its `:reconfiguring` state.
+Wi-Fi AP configuration is built by `Network` and invoked only through
+`ServiceMode.Platform`. No application module scans or configures Wi-Fi station
+mode.
 
-## Tailscale boundary
+## Tailscale and proxy
 
 | Module | Responsibility |
 | --- | --- |
 | `PlcRemote.TailscaleSupervisor` | One lifetime for manager, connection tasks, and sessions |
-| `PlcRemote.TailscaleManager` | Enrollment, reconnect policy, listener ownership, and commissioning completion |
-| `PlcRemote.Adapters.Tailscale` | Small transport contract used by the manager and proxy |
-| `PlcRemote.Adapters.Target.Tailscale` | The only direct `tailscale-rs` integration |
-| `PlcRemote.TcpProxy` | Bidirectional copying between one tailnet stream and one fixed PLC socket |
+| `PlcRemote.TailscaleManager` | Enrollment, retry state, optional fixed listener, session ownership |
+| `PlcRemote.Adapters.Target.Tailscale` | Only direct `tailscale-rs` integration |
+| `PlcRemote.TcpProxy` | Bidirectional bytes between one tailnet stream and fixed PLC socket |
 
-The manager never installs a subnet route. A remote peer cannot choose the PLC
-address or destination port through the data stream.
+No component installs a subnet route or accepts a destination from a remote
+peer.
 
-## Commissioning boundary
+## Service and web
 
 | Module | Responsibility |
 | --- | --- |
-| `PlcRemote.ServiceMode.Supervisor` | Shared failure boundary for service state and Bandit |
-| `PlcRemote.ServiceMode` | Automatic/open and GPIO/WPA2 lifecycle state machine |
-| `PlcRemote.ServiceMode.Platform` | GPIO, AP, device identity, and bind-address facade |
-| `PlcRemote.ServiceMode.WebSupervisor` | Temporary Bandit child ownership |
-| `PlcRemoteWeb.Router` | HTTP, CSRF, captive redirects, and non-secret status API |
-| `PlcRemoteWeb.Page` | Server-rendered settings page |
-| `PlcRemote.FirmwareValidator` | Product-level tentative firmware validation and A/B rollback |
-| `PlcRemote.Adapters.System` | Testable boundary for Heart, validation, rollback, and reboot |
+| `PlcRemote.ServiceMode.Supervisor` | One-for-all Phoenix, Bandit, and AP state boundary |
+| `PlcRemote.ServiceMode` | First setup, GPIO recovery, final verification, transactional exit |
+| `PlcRemote.ServiceMode.Platform` | GPIO, AP, serial number, and bind-address facade |
+| `PlcRemote.ServiceMode.WebRuntimeSupervisor` | Per-device endpoint secret and Phoenix runtime |
+| `PlcRemote.ServiceMode.WebSupervisor` | Temporary Bandit listener |
+| `PlcRemoteWeb.CommissioningLive` | Ethernet → Tailscale → Verify UI |
+| `PlcRemoteWeb.Router` | LiveView and captive-probe routes |
+| `PlcRemoteWeb.Endpoint` | Sessions, transports, static assets, HTTP boundary |
+| `Volt` | Host-only TypeScript/CSS build |
 
-First boot stays open until a real tailnet connection and safe network roles are
-persisted. Later recovery requires GPIO activation and uses WPA2.
+Final checks run while the AP is still active. Success closes it; failure leaves
+it active. Protected onsite settings commit only after the same checks pass.
 
-## Non-negotiable invariants
+## Recovery and firmware
 
-1. Disable every detected Ethernet interface before applying role assignments.
-2. Identify Ethernet roles by hardware path, never by `ethN` name.
-3. Never add a gateway or DNS server to the machine interface.
-4. Never enable bridging, NAT, IPv4 forwarding, or IPv6 forwarding.
-5. Never persist or render a Tailscale auth key.
-6. Never stop first-boot commissioning merely because settings were submitted.
-7. Never let a manager restart leave its listeners, sessions, or web server alive.
-8. Keep target-only libraries behind adapters in `target/`; keep host fakes in `host/`.
-9. Never automatically reboot an unvalidated candidate firmware.
-10. Never reset the recovery reboot budget until Tailscale remains stable.
-11. Keep post-v2 settings migrations additive until the candidate image is validated.
+| Module | Responsibility |
+| --- | --- |
+| `PlcRemote.RecoveryManager` | Reconnect, Ethernet reapply/cycle, Tailscale restart, bounded reboot |
+| `PlcRemote.Recovery.Policy` | Pure escalation ordering |
+| `PlcRemote.Recovery.Safety` | Reboot budget and candidate-firmware guards |
+| `PlcRemote.Recovery.Store` | Persistent reboot budget |
+| `PlcRemote.FirmwareValidator` | Evidence-based tentative firmware validation/rollback |
+| `PlcRemote.Adapters.System` | Heart, A/B validation, rollback, and reboot boundary |
 
-## Validation path
+## Invariants
 
-For every change:
+1. Disable every detected Ethernet interface before applying active roles.
+2. Identify Ethernet roles by hardware path, never `ethN`.
+3. Internet is Ethernet-only; `wlan0` is AP-only.
+4. Never give the PLC interface a gateway or DNS.
+5. Never bridge, NAT, route the PLC subnet, or enable kernel forwarding.
+6. Never persist or render a Tailscale auth key.
+7. Open no PLC listener while the PLC role is disabled.
+8. Keep manager-owned tasks/listeners in one supervision lifetime.
+9. Keep the first-boot AP until explicit verification succeeds.
+10. Keep onsite changes behind a power-loss-safe rollback snapshot.
+11. Never automatically reboot an unvalidated candidate.
+12. Keep A/B settings compatibility until candidate validation.
+
+## Validation
 
 ```sh
-mix format
-mix test
-mix credo --strict
-mix dialyzer
 mix ci
-MIX_TARGET=rpi4 mix compile --warnings-as-errors
-MIX_TARGET=rpi5 mix compile --warnings-as-errors
+mix ci.x86
+mix ci.qemu
+mix ci.integration
+MIX_TARGET=rpi4 mix compile --force --warnings-as-errors
+MIX_TARGET=rpi5 mix compile --force --warnings-as-errors
 ```
 
-Hardware-affecting changes additionally require UART logs and a real AP, role,
-Tailscale, and PLC connection check before deployment.
+Hardware-affecting changes additionally require repeated UART-observed boots,
+Ethernet path confirmation, setup/GPIO AP checks, tailnet enrollment, and a real
+PLC proxy test.

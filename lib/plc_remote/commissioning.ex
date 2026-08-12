@@ -1,29 +1,37 @@
 defmodule PlcRemote.Commissioning do
   @moduledoc """
-  Pure rules for first-boot commissioning.
+  Pure first-boot commissioning rules.
 
-  Keeping these decisions outside the network, web, and Tailscale processes
-  makes the security boundary explicit: an open setup WLAN is required until a
-  successful tailnet connection has a usable machine role, a usable uplink
-  role, and an error-free network configuration.
+  The setup AP remains available until an installer explicitly proves Internet
+  over the selected Ethernet port and a joined Tailscale identity.
   """
 
   @doc "Returns whether automatic first-boot commissioning is still required."
   @spec required?(PlcRemote.Settings.t()) :: boolean()
   def required?(settings), do: not settings.commissioned
 
-  @doc "Returns whether network roles are safe to mark as commissioned."
+  @doc "Returns whether the configured Ethernet Internet interface is ready to test."
   @spec network_ready?(PlcRemote.Settings.t(), map()) :: boolean()
   def network_ready?(settings, network_status) do
-    is_nil(network_status.last_error) and
-      not is_nil(network_status.roles.machine_lan) and
-      uplink_ready?(settings.uplink.mode, network_status.roles)
+    settings.uplink.mode == :ethernet and
+      is_nil(network_status.last_error) and
+      not is_nil(network_status.roles.internet_uplink)
   end
 
-  defp uplink_ready?(:wifi, _roles), do: true
+  @doc "Builds the non-secret checklist used by the final commissioning transaction."
+  @spec verification(map(), map()) :: map()
+  def verification(network, tailscale) do
+    %{
+      internet: network.connection == :internet,
+      tailscale:
+        tailscale.state == :connected and is_binary(tailscale.tailnet_ipv4) and
+          tailscale.tailnet_ipv4 != ""
+    }
+  end
 
-  defp uplink_ready?(mode, roles) when mode in [:auto, :ethernet],
-    do: not is_nil(roles.wired_uplink)
-
-  defp uplink_ready?(_mode, _roles), do: false
+  @doc "Returns whether every required final commissioning check passed."
+  @spec verified?(map()) :: boolean()
+  def verified?(checks) do
+    Enum.all?([:internet, :tailscale], &Map.get(checks, &1, false))
+  end
 end

@@ -2,6 +2,14 @@ import Config
 
 # Add configuration that is only needed when running on the host here.
 
+config :plc_remote, PlcRemoteWeb.Endpoint,
+  check_origin: [
+    "//localhost:4000",
+    "//127.0.0.1:4000",
+    "//plc.setup",
+    "//192.168.50.1"
+  ]
+
 config :nerves_runtime,
   kv_backend:
     {Nerves.Runtime.KVBackend.InMemory,

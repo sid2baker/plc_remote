@@ -1,74 +1,165 @@
 defmodule PlcRemoteWeb.RouterTest do
   use ExUnit.Case, async: false
 
-  import Plug.Conn, only: [get_resp_header: 2, put_req_header: 3]
-  import Plug.Test
+  import Phoenix.ConnTest
+  import Phoenix.LiveViewTest
+  import Plug.Conn, only: [get_resp_header: 2]
+  import ExUnit.CaptureLog
 
-  alias PlcRemote.{Configuration, ServiceMode}
-  alias PlcRemoteWeb.Router
+  alias PlcRemote.{Configuration, ServiceMode, Settings}
+  alias PlcRemoteWeb.Endpoint
 
-  test "renders the responsive settings portal without exposing stored secrets" do
-    conn = conn(:get, "/") |> Router.call(Router.init([]))
+  @endpoint Endpoint
+
+  test "renders an Ethernet-only commissioning wizard without stored secrets" do
+    {:ok, view, html} = live(build_conn(), "/")
     service = Configuration.get().service
 
-    assert conn.status == 200
-    assert conn.resp_body =~ "PLC Remote Setup"
-    assert conn.resp_body =~ "S7 TCP proxy"
-    assert conn.resp_body =~ "One-time auth key"
-    refute conn.resp_body =~ service.psk
-    refute conn.resp_body =~ service.web_secret
-    assert get_resp_header(conn, "cache-control") == ["no-store, max-age=0"]
-    assert get_resp_header(conn, "content-security-policy") != []
+    assert html =~ "Connect this gateway in three steps"
+    assert html =~ "Connect one Ethernet port"
+    assert has_element?(view, "input[name='settings[uplink_mode]'][value='ethernet']")
+    assert has_element?(view, "select[name='settings[ethernet_interface_hw_path]']")
+    refute html =~ "Wi-Fi network"
+    refute html =~ "wifi_ssid"
+    refute html =~ "wifi_psk"
+    refute html =~ "Rescan networks"
+    refute html =~ "settings[plc_address]"
+    refute html =~ "settings[plc_destination_port]"
+    refute html =~ service.psk
+    refute html =~ service.web_secret
   end
 
-  test "redirects captive portal probes to the setup hostname" do
-    conn = conn(:get, "/generate_204") |> Router.call(Router.init([]))
+  test "uses DHCP by default and tests Ethernet before continuing" do
+    {:ok, view, _html} = live(build_conn(), "/")
+    assert has_element?(view, "details[data-visible-when='ethernet_method:static'][hidden]")
+
+    html =
+      view
+      |> form("form[phx-submit=save-network]",
+        settings: %{
+          "ethernet_interface_hw_path" => "/devices/host/usb-2.5-gigabit",
+          "ethernet_method" => "dhcp"
+        }
+      )
+      |> render_submit()
+
+    assert Configuration.get().uplink.mode == :ethernet
+    assert html =~ "Internet connection works"
+    assert has_element?(view, "a", "Continue to Tailscale")
+  end
+
+  test "shows the Tailscale connection result directly on the auth-key step" do
+    assert {:ok, _settings} =
+             Configuration.update(%{
+               "uplink_mode" => "ethernet",
+               "ethernet_interface_hw_path" => "/devices/host/usb-2.5-gigabit"
+             })
+
+    {:ok, view, _html} = live(build_conn(), "/?step=tailscale")
+    assert has_element?(view, "input[name='settings[tailscale_auth_key]']")
+    refute has_element?(view, "input[name='settings[plc_destination_port]']")
+    refute has_element?(view, "input[name='settings[plc_address]']")
+
+    view
+    |> form("form[phx-submit=save-tailscale]",
+      settings: %{"tailscale_auth_key" => "tskey-auth-test-only"}
+    )
+    |> render_submit()
+
+    assert eventually?(fn -> render(view) =~ "Tailscale could not connect" end)
+    assert has_element?(view, "button", "Connect Tailscale")
+  end
+
+  test "failed final verification returns the live page while keeping the AP active" do
+    original = Configuration.get()
+    Application.put_env(:plc_remote, :auto_commissioning, true)
+    Application.put_env(:plc_remote, :commissioning_verification_check_ms, 10)
+    Application.put_env(:plc_remote, :commissioning_verification_timeout_ms, 50)
+
+    on_exit(fn ->
+      Application.put_env(:plc_remote, :auto_commissioning, false)
+      Application.delete_env(:plc_remote, :commissioning_verification_check_ms)
+      Application.delete_env(:plc_remote, :commissioning_verification_timeout_ms)
+      Configuration.restore(original)
+    end)
+
+    assert {:ok, candidate, nil} =
+             Settings.update(original, %{
+               "uplink_mode" => "ethernet",
+               "ethernet_interface_hw_path" => "/devices/host/usb-2.5-gigabit",
+               "tailscale_enabled" => "true"
+             })
+
+    assert :ok = ServiceMode.deactivate()
+    assert :ok = Configuration.restore(%{candidate | commissioned: false})
+    restart_service_boundary()
+    assert eventually?(fn -> ServiceMode.status().mode == :automatic end)
+
+    {:ok, view, _html} = live(build_conn(), "/?step=verify")
+    view |> element("button[phx-click='finish-commissioning']") |> render_click()
+    assert has_element?(view, "#commissioning-handoff")
+
+    assert eventually?(fn ->
+             has_element?(view, "#final-verification-failed") and
+               not has_element?(view, "#commissioning-handoff")
+           end)
+
+    assert ServiceMode.status().active
+  end
+
+  test "filters one-time credentials from rendered output and LiveView logs" do
+    {:ok, view, _html} = live(build_conn(), "/?step=tailscale")
+    secret = "tskey-auth-never-log-this"
+
+    log =
+      capture_log(fn ->
+        html =
+          view
+          |> form("form[phx-submit=save-tailscale]",
+            settings: %{"tailscale_auth_key" => secret}
+          )
+          |> render_submit()
+
+        refute html =~ secret
+      end)
+
+    refute log =~ secret
+  end
+
+  test "redirects captive portal probes to the stable setup hostname" do
+    conn = get(build_conn(), "/generate_204")
 
     assert conn.status == 302
     assert get_resp_header(conn, "location") == ["http://plc.setup/"]
+    assert get_resp_header(conn, "cache-control") == ["no-store, max-age=0"]
   end
 
-  test "accepts a CSRF-protected settings form submission" do
-    get_conn = conn(:get, "/") |> Router.call(Router.init([]))
-    [_, token] = Regex.run(~r/name="_csrf_token" value="([^"]+)"/, get_conn.resp_body)
-
-    cookie =
-      get_conn
-      |> get_resp_header("set-cookie")
-      |> hd()
-      |> String.split(";", parts: 2)
-      |> hd()
-
-    body = URI.encode_query(%{"_csrf_token" => token})
-
-    post_conn =
-      :post
-      |> conn("/settings", body)
-      |> put_req_header("content-type", "application/x-www-form-urlencoded")
-      |> put_req_header("cookie", cookie)
-      |> Router.call(Router.init([]))
-
-    assert post_conn.status == 200
-    assert post_conn.resp_body =~ "Settings saved and applied."
+  defp restart_service_boundary do
+    :ok = Supervisor.terminate_child(PlcRemote.Supervisor, PlcRemote.ServiceMode.Supervisor)
+    {:ok, _pid} = Supervisor.restart_child(PlcRemote.Supervisor, PlcRemote.ServiceMode.Supervisor)
+    :ok
   end
 
-  test "reports only non-secret service and Tailscale status" do
-    conn = conn(:get, "/api/status") |> Router.call(Router.init([]))
-    payload = Jason.decode!(conn.resp_body)
+  defp eventually?(predicate, attempts \\ 100)
+  defp eventually?(_predicate, 0), do: false
 
-    assert conn.status == 200
-    assert payload["commissioned"] == false
-    assert payload["firmware"]["firmware"] == "validated"
-    assert payload["recovery"]["consecutive_reboots"] == 0
-    assert is_boolean(payload["service_mode"]["active"])
-    assert [_, _, _] = payload["network"]["interfaces"]
-    assert payload["network"]["roles"]["machine_lan"] == nil
-    assert payload["tailscale"]["state"] == "disabled"
-    refute conn.resp_body =~ Configuration.service_credentials().psk
+  defp eventually?(predicate, attempts) do
+    if predicate.() do
+      true
+    else
+      Process.sleep(20)
+      eventually?(predicate, attempts - 1)
+    end
   end
 
   setup do
+    Application.put_env(:plc_remote, :auto_commissioning, false)
+    restart_service_boundary()
+    assert :ok = ServiceMode.activate()
+
     on_exit(fn ->
+      Application.put_env(:plc_remote, :auto_commissioning, false)
+      restart_service_boundary()
       if ServiceMode.active?(), do: ServiceMode.deactivate()
     end)
   end

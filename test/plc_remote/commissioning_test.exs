@@ -3,23 +3,33 @@ defmodule PlcRemote.CommissioningTest do
 
   alias PlcRemote.{Commissioning, Settings}
 
-  test "requires commissioning until the persisted marker is set" do
-    settings = Settings.defaults(service_psk: "commissioning-key")
-    assert Commissioning.required?(settings)
-    refute Commissioning.required?(%{settings | commissioned: true})
+  test "requires commissioning until final verification persists success" do
+    refute Settings.defaults(service_psk: "commissioning-key").commissioned
+    assert Commissioning.required?(Settings.defaults(service_psk: "commissioning-key"))
+    refute Commissioning.required?(%{Settings.defaults() | commissioned: true})
   end
 
-  test "requires distinct resolved machine and wired-uplink roles without network errors" do
-    settings = Settings.defaults(service_psk: "commissioning-key")
-    settings = put_in(settings.uplink.mode, :ethernet)
+  test "requires an assigned Ethernet Internet role without requiring a PLC role" do
+    settings =
+      Settings.defaults(service_psk: "commissioning-key")
+      |> put_in([:uplink, :mode], :ethernet)
 
-    ready = %{
-      last_error: nil,
-      roles: %{machine_lan: "eth0", wired_uplink: "eth1"}
-    }
+    ready = %{last_error: nil, roles: %{machine_lan: nil, internet_uplink: "eth0"}}
 
     assert Commissioning.network_ready?(settings, ready)
-    refute Commissioning.network_ready?(settings, put_in(ready.roles.machine_lan, nil))
-    refute Commissioning.network_ready?(settings, %{ready | last_error: "configuration failed"})
+    refute Commissioning.network_ready?(settings, put_in(ready.roles.internet_uplink, nil))
+    refute Commissioning.network_ready?(settings, %{ready | last_error: "failed"})
+  end
+
+  test "verification requires only Internet and a joined tailnet" do
+    checks =
+      Commissioning.verification(
+        %{connection: :internet},
+        %{state: :connected, tailnet_ipv4: "100.64.0.1"}
+      )
+
+    assert checks == %{internet: true, tailscale: true}
+    assert Commissioning.verified?(checks)
+    refute Commissioning.verified?(%{checks | internet: false})
   end
 end

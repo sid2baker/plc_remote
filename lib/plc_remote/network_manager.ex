@@ -1,11 +1,10 @@
 defmodule PlcRemote.NetworkManager do
   @moduledoc """
-  Applies persisted network intent to currently detected hardware.
+  Applies the two stable Ethernet roles and keeps every other Ethernet port off.
 
-  Every Ethernet update is two-phase: disable all detected ports first, then
-  resolve stable hardware paths and enable only the selected machine and uplink
-  roles. Interface identity is refreshed periodically so late USB discovery or
-  kernel renaming is handled without opening the wrong network.
+  Every update is disable-first: all detected Ethernet interfaces are disabled,
+  then only the configured Internet and PLC ports are enabled. Wi-Fi is not an
+  Internet uplink and is owned exclusively by service mode.
   """
 
   use GenServer
@@ -25,18 +24,13 @@ defmodule PlcRemote.NetworkManager do
   @spec status() :: map()
   def status, do: GenServer.call(__MODULE__, :status)
 
-  @spec restore_wifi() :: :ok
-  def restore_wifi do
-    GenServer.cast(__MODULE__, :restore_wifi)
-  end
-
-  @doc "Reapplies the complete disable-first network plan."
+  @doc "Reapplies the complete disable-first Ethernet plan."
   @spec reapply() :: :ok | {:error, term()}
   def reapply, do: GenServer.call(__MODULE__, :reapply, 60_000)
 
-  @doc "Power-cycles configured Internet uplinks and reapplies their settings."
-  @spec cycle_uplinks() :: :ok | {:error, term()}
-  def cycle_uplinks, do: GenServer.call(__MODULE__, :cycle_uplinks, 60_000)
+  @doc "Power-cycles the configured Internet Ethernet interface."
+  @spec cycle_uplink() :: :ok | {:error, term()}
+  def cycle_uplink, do: GenServer.call(__MODULE__, :cycle_uplink, 60_000)
 
   @impl GenServer
   def init(_opts) do
@@ -64,7 +58,8 @@ defmodule PlcRemote.NetworkManager do
       connection: adapter().connection_status(),
       interfaces: interfaces,
       last_error: state.last_error,
-      roles: Network.role_ifnames(state.settings, interfaces)
+      roles: Network.role_ifnames(state.settings, interfaces),
+      uplink_mode: state.settings.uplink.mode
     }
 
     {:reply, status, %{state | interfaces: interfaces}}
@@ -77,19 +72,12 @@ defmodule PlcRemote.NetworkManager do
     {:reply, result, state}
   end
 
-  def handle_call(:cycle_uplinks, _from, state) do
+  def handle_call(:cycle_uplink, _from, state) do
     interfaces = interfaces()
-    result = cycle_uplinks(state.settings, interfaces)
-    state = %{state | interfaces: interfaces} |> record_result(result)
+    result = cycle_uplink(state.settings, interfaces)
+    state = %{state | interfaces: interfaces}
+    state = if result == :ok, do: record_result(state, result), else: state
     {:reply, result, state}
-  end
-
-  @impl GenServer
-  def handle_cast(:restore_wifi, state) do
-    case apply_wifi(state.settings) do
-      :ok -> {:noreply, state}
-      {:error, _reason} = error -> {:noreply, record_result(state, error)}
-    end
   end
 
   @impl GenServer
@@ -140,45 +128,27 @@ defmodule PlcRemote.NetworkManager do
 
   defp apply_settings(settings, interfaces) do
     with :ok <- disable_ethernet(Network.ethernet_baseline(interfaces)),
-         {:ok, configurations} <- Network.ethernet_configurations(settings, interfaces),
-         :ok <- configure_many(configurations) do
-      maybe_configure_wifi(settings)
+         {:ok, configurations} <- Network.ethernet_configurations(settings, interfaces) do
+      configure_many(configurations)
     end
   end
 
-  defp cycle_uplinks(settings, interfaces) do
+  defp cycle_uplink(settings, interfaces) do
     if service_mode_active?() do
       {:error, :service_mode_active}
     else
-      roles = Network.role_ifnames(settings, interfaces)
-
-      with :ok <- disable_wired_uplink(roles.wired_uplink),
-           :ok <- configure(Network.interface(:wifi_uplink), %{type: VintageNetWiFi}) do
-        Process.sleep(Application.get_env(:plc_remote, :uplink_cycle_delay_ms, 2_000))
-        apply_settings(settings, interfaces)
+      case Network.role_ifnames(settings, interfaces).internet_uplink do
+        nil -> {:error, :internet_uplink_unassigned}
+        ifname -> cycle_interface(ifname, settings, interfaces)
       end
     end
   end
 
-  defp disable_wired_uplink(nil), do: :ok
-
-  defp disable_wired_uplink(ifname) do
-    configure(ifname, Network.disabled_ethernet_config())
-  end
-
-  defp maybe_configure_wifi(settings) do
-    if service_mode_active?(), do: :ok, else: apply_wifi(settings)
-  end
-
-  defp apply_wifi(%{uplink: %{mode: mode}}) when mode in [:disabled, :ethernet] do
-    configure(Network.interface(:wifi_uplink), %{type: VintageNetWiFi})
-  end
-
-  defp apply_wifi(%{uplink: uplink}) do
-    configure(
-      Network.interface(:wifi_uplink),
-      Network.wifi_uplink_config(uplink.wifi, uplink.regulatory_domain)
-    )
+  defp cycle_interface(ifname, settings, interfaces) do
+    with :ok <- configure(ifname, Network.disabled_ethernet_config()) do
+      Process.sleep(Application.get_env(:plc_remote, :uplink_cycle_delay_ms, 2_000))
+      apply_settings(settings, interfaces)
+    end
   end
 
   defp disable_ethernet(configurations) do
@@ -201,12 +171,26 @@ defmodule PlcRemote.NetworkManager do
   end
 
   defp record_result(state, :ok) do
-    %{state | last_error: nil, applied_at: DateTime.utc_now()}
+    applied_at = DateTime.utc_now()
+    roles = Network.role_ifnames(state.settings, state.interfaces)
+
+    notify_tailscale(
+      PlcRemote.ProxyPolicy.machine_ifname(state.settings, %{last_error: nil, roles: roles})
+    )
+
+    %{state | last_error: nil, applied_at: applied_at}
   end
 
   defp record_result(state, {:error, reason}) do
     Logger.error("Failed to apply gateway network settings: #{inspect(reason)}")
+    notify_tailscale(nil)
     %{state | last_error: inspect(reason), applied_at: DateTime.utc_now()}
+  end
+
+  defp notify_tailscale(machine_ifname) do
+    if pid = Process.whereis(PlcRemote.TailscaleManager) do
+      send(pid, {:machine_interface_changed, machine_ifname})
+    end
   end
 
   defp service_mode_active? do
@@ -220,21 +204,12 @@ defmodule PlcRemote.NetworkManager do
 
   defp network_settings(settings), do: {settings.machine, settings.uplink}
 
-  defp interface_signature(interfaces) do
-    Enum.map(interfaces, &{&1.ifname, &1.hw_path, &1.kind})
-  end
+  defp interface_signature(interfaces),
+    do: Enum.map(interfaces, &{&1.ifname, &1.hw_path, &1.kind})
 
-  defp interfaces do
-    adapter().interfaces()
-  end
-
-  defp configure(ifname, config) do
-    adapter().configure(ifname, config, persist: false)
-  end
-
-  defp adapter do
-    Application.fetch_env!(:plc_remote, :network_adapter)
-  end
+  defp interfaces, do: adapter().interfaces()
+  defp configure(ifname, config), do: adapter().configure(ifname, config, persist: false)
+  defp adapter, do: Application.fetch_env!(:plc_remote, :network_adapter)
 
   defp schedule_refresh do
     Process.send_after(self(), :refresh_interfaces, @refresh_interval_ms)

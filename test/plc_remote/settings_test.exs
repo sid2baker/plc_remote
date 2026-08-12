@@ -19,6 +19,21 @@ defmodule PlcRemote.SettingsTest do
     assert settings.service.psk == "commissioning-key"
   end
 
+  test "allows tailnet enrollment before PLC settings are configured" do
+    settings = Settings.defaults(service_psk: "commissioning-key")
+
+    assert {:ok, updated, "tskey-auth-once"} =
+             Settings.update(settings, %{
+               "uplink_mode" => "ethernet",
+               "ethernet_interface_hw_path" => "/devices/platform/internet",
+               "tailscale_enabled" => "true",
+               "tailscale_auth_key" => "tskey-auth-once"
+             })
+
+    refute updated.machine.enabled
+    assert updated.tailscale.enabled
+  end
+
   test "updates and validates all remote access fields" do
     current = Settings.defaults(service_psk: "commissioning-key")
 
@@ -73,21 +88,31 @@ defmodule PlcRemote.SettingsTest do
     refute updated.commissioned
   end
 
-  test "supports Ethernet-primary Wi-Fi fallback configuration" do
+  test "rejects legacy Wi-Fi modes by normalizing them to disabled" do
     settings = Settings.defaults(service_psk: "commissioning-key")
 
     assert {:ok, updated, nil} =
              Settings.update(settings, %{
-               "uplink_mode" => "auto",
-               "ethernet_interface_hw_path" => "/devices/usb/uplink",
+               "uplink_mode" => "wifi",
                "wifi_ssid" => "Plant-WAN",
                "wifi_psk" => "fallback-secret"
              })
 
-    assert updated.uplink.mode == :auto
-    assert updated.uplink.ethernet.method == :dhcp
-    assert updated.uplink.wifi.ssid == "Plant-WAN"
-    assert updated.uplink.wifi.psk == "fallback-secret"
+    assert updated.uplink.mode == :disabled
+    refute Map.has_key?(updated.uplink, :wifi)
+  end
+
+  test "rejects a forged unknown uplink mode instead of retaining Ethernet" do
+    settings = Settings.defaults(service_psk: "commissioning-key")
+
+    assert {:ok, ethernet, nil} =
+             Settings.update(settings, %{
+               "uplink_mode" => "ethernet",
+               "ethernet_interface_hw_path" => "/devices/usb/internet"
+             })
+
+    assert {:ok, disabled, nil} = Settings.update(ethernet, %{"uplink_mode" => "wifi"})
+    assert disabled.uplink.mode == :disabled
   end
 
   test "auth keys are never encoded into persistent settings" do
@@ -127,16 +152,48 @@ defmodule PlcRemote.SettingsTest do
       |> Jason.encode!()
 
     assert {:ok, migrated} = Settings.decode(legacy, service_psk: "unused")
-    assert migrated.version == 3
+    assert migrated.version == 4
     refute migrated.machine.enabled
     assert migrated.uplink.mode == :disabled
     refute migrated.tailscale.enabled
+  end
+
+  test "migrates commissioned automatic mode to Ethernet when a wired path exists" do
+    legacy =
+      Settings.defaults(service_psk: "commissioning-key")
+      |> Map.put(:version, 3)
+      |> Map.put(:commissioned, true)
+      |> put_in([:uplink, :mode], :auto)
+      |> put_in([:uplink, :ethernet, :interface_hw_path], "/devices/usb/internet")
+      |> Map.update!(:uplink, &Map.put(&1, :wifi, %{ssid: "Plant-WAN", psk: "secret"}))
+      |> Jason.encode!()
+
+    assert {:ok, migrated} = Settings.decode(legacy, service_psk: "unused")
+    assert migrated.version == 4
+    assert migrated.commissioned
+    assert migrated.uplink.mode == :ethernet
+    refute Map.has_key?(migrated.uplink, :wifi)
+  end
+
+  test "forces commissioned Wi-Fi-only settings back through commissioning" do
+    legacy =
+      Settings.defaults(service_psk: "commissioning-key")
+      |> Map.put(:version, 3)
+      |> Map.put(:commissioned, true)
+      |> put_in([:uplink, :mode], :wifi)
+      |> Jason.encode!()
+
+    assert {:ok, migrated} = Settings.decode(legacy, service_psk: "unused")
+    refute migrated.commissioned
+    assert migrated.uplink.mode == :disabled
   end
 
   test "persists a completed commissioning marker" do
     settings =
       Settings.defaults(service_psk: "commissioning-key")
       |> Map.put(:commissioned, true)
+      |> put_in([:uplink, :mode], :ethernet)
+      |> put_in([:uplink, :ethernet, :interface_hw_path], "/devices/usb/internet")
 
     assert {:ok, encoded} = Settings.encode(settings)
     assert {:ok, decoded} = Settings.decode(encoded, service_psk: "unused")
@@ -157,7 +214,7 @@ defmodule PlcRemote.SettingsTest do
       |> Jason.encode!()
 
     assert {:ok, migrated} = Settings.decode(version_two, service_psk: "unused")
-    assert migrated.version == 3
+    assert migrated.version == 4
     assert migrated.commissioned
     assert migrated.machine.enabled
     assert migrated.uplink.mode == :ethernet
@@ -230,7 +287,7 @@ defmodule PlcRemote.SettingsTest do
     assert errors["machine_address"] == "subnet overlaps the service-mode network"
   end
 
-  test "rejects static uplinks that overlap the machine LAN" do
+  test "rejects a static Internet uplink that overlaps the machine LAN" do
     settings = Settings.defaults(service_psk: "commissioning-key")
 
     assert {:error, errors} =

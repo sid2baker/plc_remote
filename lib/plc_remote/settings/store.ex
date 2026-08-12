@@ -40,6 +40,17 @@ defmodule PlcRemote.Settings.Store do
     end
   end
 
+  @spec remove(nil | Path.t()) :: :ok | {:error, term()}
+  def remove(nil), do: :ok
+
+  def remove(path) do
+    case File.rm(path) do
+      :ok -> :ok
+      {:error, :enoent} -> :ok
+      {:error, _reason} = error -> error
+    end
+  end
+
   @spec quarantine(nil | Path.t()) :: :ok | {:error, term()}
   def quarantine(nil), do: :ok
 

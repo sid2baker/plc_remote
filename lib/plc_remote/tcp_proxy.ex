@@ -3,9 +3,16 @@ defmodule PlcRemote.TcpProxy do
 
   require Logger
 
-  @spec relay(term(), String.t(), :inet.port_number(), module()) :: :ok
-  def relay(stream, address, port, tailscale_adapter) do
-    options = [:binary, packet: :raw, active: false, nodelay: true, keepalive: true]
+  @spec relay(term(), String.t(), :inet.port_number(), String.t(), module()) :: :ok
+  def relay(stream, address, port, machine_ifname, tailscale_adapter) do
+    options = [
+      :binary,
+      packet: :raw,
+      active: false,
+      nodelay: true,
+      keepalive: true,
+      bind_to_device: machine_ifname
+    ]
 
     case :gen_tcp.connect(String.to_charlist(address), port, options, 10_000) do
       {:ok, socket} ->
@@ -21,11 +28,12 @@ defmodule PlcRemote.TcpProxy do
     parent = self()
 
     tail_reader =
-      spawn(fn -> tail_to_tcp(stream, socket, parent, tailscale_adapter) end)
+      spawn_link(fn -> tail_to_tcp(stream, socket, parent, tailscale_adapter) end)
 
     try do
       tcp_to_tail(socket, stream, tail_reader, tailscale_adapter)
     after
+      Process.unlink(tail_reader)
       Process.exit(tail_reader, :shutdown)
       :gen_tcp.close(socket)
     end

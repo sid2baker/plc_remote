@@ -1,176 +1,113 @@
 # PLC Remote architecture
 
-## Trust zones
+## Product boundary
 
-| Zone | IPCBOX-CM5-A interface | Default state | Purpose |
+PLC Remote is a purpose-built userspace TCP gateway, not a router.
+
+| Zone | Interface | Default | Purpose |
 | --- | --- | --- | --- |
-| Machine LAN | Selected native 1000M hardware path | Disabled until assigned | PLC devices only |
-| Wired uplink | Selected USB 2500M hardware path | Disabled until assigned | Preferred Internet path |
-| Wi-Fi uplink | `wlan0` | Disabled/scan-only | Optional Internet fallback |
-| Service network | `wlan0` AP | Open until enrolled | First-boot commissioning; WPA2 after GPIO recovery |
-| Recovery | `usb0` | On | Local Nerves IEx and recovery |
+| PLC LAN | Selected Ethernet hardware path | Disabled | Static isolated PLC network |
+| Internet | Different selected Ethernet path | Disabled | Site router and Tailscale |
+| Service | `wlan0` AP | First boot only | Setup; WPA2 GPIO recovery later |
+| Local recovery | `usb0` | On | Nerves IEx and firmware access |
 
-The machine interface receives a static address without a gateway or DNS. The
-firmware does not bridge interfaces or enable NAT. Boot sysctls explicitly keep
-IPv4/IPv6 forwarding off and reject route redirects/source routing. PLC packets
-cannot use the gateway as an Internet router.
+Wi-Fi is never an Internet uplink. There is no station configuration, network
+scan, AP/station transition, fallback route, bridge, NAT, subnet route, or
+kernel forwarding.
 
 ## Remote data path
 
 ```text
-Tailnet operator
-  -> gateway tailnet IPv4 + allowlisted TCP port
+Authorized tailnet client
+  -> gateway tailnet IPv4 + fixed TCP listen port
   -> tailscale-rs userspace listener
-  -> fixed PlcRemote.TcpProxy destination
-  -> PLC IPv4 + configured TCP port on the selected machine interface
+  -> PlcRemote.TcpProxy
+  -> one configured PLC IPv4 + fixed destination port
 ```
 
-The initial mapping defaults to Tailscale TCP/102 -> PLC TCP/102. Tailnet ACLs
-remain the first authorization layer; the local fixed destination is the second.
-The remote peer cannot select a different LAN address or port through the data
-stream.
+Commissioning may enroll Tailscale before PLC provisioning. While
+`machine.enabled` is false, `tailscale-rs` joins but creates no TCP listener.
+When provisioned, the remote peer cannot choose another PLC address or port.
+Broadcast discovery and Layer 2 protocols do not cross this path.
 
-This is not transparent routing. A technician configures the engineering client
-with the gateway's tailnet IPv4, not the PLC IPv4. Broadcast discovery,
-PROFINET/DCP, and other Layer 2 traffic are unavailable. Supporting multiple
-PLCs requires additional explicit mappings rather than opening the subnet.
+The pinned `sid2baker/s7` package is independent of the proxy and remains
+available from local IEx.
 
-The remote data path is a raw TCP relay, so it preserves S7 traffic without
-protocol translation. The pinned `sid2baker/s7` library is still included in the
-firmware for dynamic PLC diagnostics and configuration from the Nerves IEx
-shell; it is intentionally not coupled to proxy availability.
+## Ethernet ownership
+
+`PlcRemote.Configuration` persists stable `/devices/...` paths. VintageNet's
+ifname-keyed persistence is disabled. `PlcRemote.NetworkManager` owns Ethernet
+configuration and always:
+
+1. Detects physical Ethernet interfaces.
+2. Disables every detected Ethernet interface.
+3. Resolves the configured Internet and PLC hardware paths.
+4. Rejects missing or duplicate active roles.
+5. Applies only the valid role configurations.
+
+The PLC role has a static address and prefix without gateway or DNS. The
+Internet role uses DHCP or explicit static address, gateway, and DNS. Boot
+sysctls disable IPv4/IPv6 forwarding, redirects, and source routing.
+
+## Service AP and commissioning
+
+An uncommissioned target starts an open, non-persistent AP on `wlan0` at
+`192.168.50.1/24`. It serves DHCP, wildcard captive DNS for `plc.setup`, and a
+temporary Bandit listener. No Wi-Fi scan or station process is involved.
+
+The LiveView wizard has three steps:
+
+1. Select and test the Ethernet Internet port.
+2. Enroll the gateway in Tailscale.
+3. Verify Ethernet Internet and Tailscale, then close the setup AP.
+
+Final verification runs while the AP remains active. Success atomically marks
+the unit commissioned and then closes Bandit and the AP. Failure leaves the AP
+active. A reboot before success starts first-boot setup again.
+
+After commissioning, a physical GPIO hold starts a WPA2-protected AP with a
+bounded inactivity timeout. Onsite setting updates are transactional. The prior
+settings snapshot is restored on explicit exit, timeout, failed verification,
+portal crash, service process restart, or power loss unless final verification
+commits it.
+
+Phoenix uses CSRF protection, per-device signing material, strict security
+headers, no-store responses, no external assets, and no service worker. The
+first AP and HTTP portal are intentionally unencrypted, so first commissioning
+requires a physically controlled area and a short-lived Tailscale auth key.
 
 ## tailscale-rs boundary
 
-The project intentionally uses `tailscale-rs` 0.4.0. Upstream marks this release
-as unstable, unaudited, and DERP-only and explicitly does not support subnet
-routers. The target adapter sets the required
-`TS_RS_EXPERIMENT=this_is_unstable_software` acknowledgement.
+The project intentionally pins experimental `tailscale-rs` v0.4.0. The required
+`TS_RS_EXPERIMENT=this_is_unstable_software` acknowledgement is installed in
+`vm.args` before native code loads. Identity state is owner-only under
+`/data/plc_remote/tailscale`.
 
-Tailscale key state is stored under `/data/plc_remote/tailscale` with owner-only
-permissions. A submitted auth key exists only in the portal request and
-connection-manager memory; it is not inserted into persistent settings.
+`PlcRemote.TailscaleManager` owns connection retries, the optional fixed
+listener, accepted session tasks, and public non-secret status. A one-for-all
+supervisor tears down manager, connection tasks, and proxy sessions together.
+A reproducible dependency patch replaces a reproduced late-netmon `.unwrap()`
+panic during runtime shutdown with a non-fatal debug event.
 
-## Internet failover
+## Recovery and OTA
 
-Normal field configuration uses uplink mode `:auto`. VintageNet configures both
-the selected Ethernet uplink and the saved Wi-Fi station network. Its route
-policy prefers an Internet-capable Ethernet route, then an Internet-capable
-Wi-Fi route. Therefore an Ethernet carrier or upstream Internet failure moves
-new Tailscale traffic to Wi-Fi without changing the PLC-side interface.
+A commissioned Tailscale outage escalates through:
 
-Tailscale reconnect delay starts at roughly five seconds, grows through 15, 30,
-60, and 120 seconds, and caps at five minutes with ±20 percent jitter. Jitter
-prevents a fleet from reconnecting simultaneously after a site or control-plane
-outage. Entering physical service mode temporarily consumes the single Wi-Fi
-radio; Ethernet remains available during that maintenance window.
+1. Tailscale reconnect.
+2. Disable-first Ethernet role reapply.
+3. Internet Ethernet cycle.
+4. Complete Tailscale boundary restart.
+5. Persisted, budget-limited device reboot.
 
-## Commissioning and service-mode boundary
+Reboots are suppressed during setup/service mode and for unvalidated candidate
+firmware. The budget resets only after stable Tailscale operation.
 
-An uncommissioned target automatically replaces Wi-Fi station mode with an open,
-non-persistent setup AP. It assigns `192.168.50.1/24`, starts DHCP and wildcard
-DNS for `plc.setup`, and binds Bandit only to that address. The AP has no timeout
-while enrollment is incomplete, so a failed network or Tailscale setup cannot
-strand a field installer.
+`PlcRemote.FirmwareValidator` validates uncommissioned candidates after the
+setup AP is healthy and commissioned candidates after stable tailnet access.
+Pre-update connectivity evidence permits rollback when a candidate loses remote
+access; an ordinary external outage is not automatically blamed on firmware.
 
-A successful `tailscale-rs` connection is not enough by itself. The machine role
-must resolve, the selected uplink role must resolve, network application must be
-error-free, and the commissioned marker must be atomically persisted. Only then
-does the open AP stop. It does not automatically return after commissioning.
-
-The Waveshare IPCBOX-CM5-A exposes DI1 as GPIO23. Its isolated input inverts the
-signal, so an asserted external high level is read as CPU level 0. The CM5
-device tree names this line `GPIO23` for Circuits.GPIO. After commissioning, a
-configured GPIO hold starts the same portal on a WPA2-protected AP. Recovery
-stops after explicit exit or the inactivity timeout and restores Wi-Fi WAN.
-
-The settings page has CSRF protection, a strict Content Security Policy,
-no-store responses, and no external resources. The captive portal is HTTP to
-avoid certificate warnings, so browsers do not activate service workers there.
-If HTTPS is added later, the included service worker caches only CSS,
-JavaScript, and the manifest; it never caches HTML, API responses, settings, or
-credentials.
-
-The initial AP is intentionally passwordless. Commissioning must therefore be
-performed in a physically controlled area and the Tailscale auth key should be
-short-lived and single-use. A random WPA2 password is generated and persisted
-for later GPIO recovery. Manufacturing may retrieve it over USB and place it on
-the device label or replace it with another unique credential.
-
-## Settings application
-
-`PlcRemote.Configuration` is the sole settings owner. Updates are validated as a
-complete unit, written atomically with mode `0600`, and then sent to the network,
-Tailscale, and service-mode managers. Invalid settings are never applied.
-Corrupt files are quarantined and replaced with fail-closed defaults.
-
-Ethernet roles persist VintageNet hardware paths rather than kernel interface
-names. VintageNet's own ifname-keyed persistence is disabled, preventing stale
-`ethN` configurations from activating on a different physical port before the
-application starts. On boot and whenever hardware identity changes, the network manager
-first disables every detected Ethernet interface. It then resolves the two
-configured paths, rejects missing or duplicate active roles, and applies the
-machine and uplink configurations. Interface discovery is repeated so a USB
-Ethernet controller that initializes late remains fail closed and can be
-configured without rebooting.
-
-Application code uses adapter behaviours. Hardware implementations are compiled
-from `target/` and selected in `config/target.exs`; host development fakes are
-compiled from `host/`. There are no host/target branches inside the runtime
-modules.
-
-Settings migrations are additive after schema version 2. A newer image must not
-destructively rewrite settings needed by the previous slot before validation.
-This keeps rollback viable without onsite reconfiguration.
-
-## Recovery escalation
-
-A commissioned device with enabled Tailscale uses the following least-disruptive
-ladder. Thresholds scale with the configured final reboot timeout:
-
-1. Request an immediate Tailscale reconnect.
-2. Reapply the disable-first hardware-path network plan.
-3. Cycle only Internet uplinks, then reapply the plan.
-4. Restart the complete Tailscale supervisor boundary.
-5. Persist and perform a full device reboot.
-
-The final reboot defaults to 60 minutes and is limited to two consecutive
-recovery reboots. The persistent counter resets only after ten minutes of stable
-Tailscale connectivity. A write failure cancels the reboot rather than risking
-an unbounded loop. Automatic reboot is suppressed while uncommissioned, while
-service mode is active, when Tailscale is intentionally disabled, or while the
-running firmware remains unvalidated. Operators can disable reboot recovery,
-set its timeout/budget, or reset the budget from local IEx.
-
-An external outage may consequently cause at most the configured number of
-reboots. Once the budget is exhausted, the device remains up, keeps using
-bounded reconnect attempts, and preserves UART/GPIO diagnostics.
-
-## OTA validation and rollback
-
-The generic Nerves startup guard is intentionally replaced by
-`PlcRemote.FirmwareValidator`. The custom validator still completes the Nerves
-Heart startup handshake, but it does not declare a candidate image healthy just
-because OTP applications started.
-
-- An uncommissioned image validates after its automatic setup AP is healthy.
-- A commissioned candidate validates after Tailscale remains connected for one
-  minute.
-- If VintageNet proves ordinary Internet access but Tailscale cannot recover for
-  45 minutes, the candidate explicitly reverts to the previous A/B slot.
-- The OTA agent calls `FirmwareValidator.prepare_for_update/0` while the old
-  image is connected. That persisted evidence also permits rollback if the
-  candidate loses all Internet for the same 45-minute window.
-- Without pre-update connectivity evidence, an Internet outage is not blamed on
-  firmware. The device stays running and unvalidated, does not reboot itself,
-  and a later power cycle can still fall back to the previous slot.
-
-Rollback makes sense for a reproducible regression in the candidate image, not
-for ISP failure, missing Wi-Fi credentials, an unplugged cable, expired
-Tailscale authorization, or a PLC-side problem. Recovery reboot policy never
-reboots an unvalidated candidate; firmware validation owns that decision.
-
-## Supervision and failure boundaries
+## Supervision
 
 ```text
 PlcRemote.Supervisor (:rest_for_one)
@@ -178,36 +115,60 @@ PlcRemote.Supervisor (:rest_for_one)
 ├── NetworkManager
 ├── TailscaleSupervisor (:one_for_all)
 │   ├── connection Task.Supervisor
-│   ├── proxy-session Task.Supervisor
+│   ├── session Task.Supervisor
 │   └── TailscaleManager
 ├── ServiceMode.Supervisor (:one_for_all)
-│   ├── WebSupervisor
+│   ├── Phoenix runtime (listener disabled)
+│   ├── temporary Bandit supervisor
 │   └── ServiceMode
 ├── RecoveryManager
 └── FirmwareValidator
 ```
 
-The root ordering follows dependencies: losing configuration restarts every
-consumer, and losing networking restarts all remote-access and commissioning
-processes. Tailscale tasks share one lifetime with their manager, preventing
-orphan listeners or PLC sessions. Service mode shares one lifetime with Bandit,
-preventing a stale listener from blocking automatic AP recovery. Tests kill the
-managers and verify that every process inside each boundary receives a new PID.
+Configuration loss restarts every consumer; network loss restarts remote and
+service boundaries. Tailscale and service resources therefore cannot remain
+orphaned after manager failure.
 
-## Hardware validation still required
+## Hardware validation
 
-The local CM5 Nerves system enables Realtek RTL8152/8153/8156 and ASIX AX88179
-USB Ethernet drivers because the public Waveshare schematic only identifies a
-“USB 2.5G ETH Module”. On the first IPCBOX-CM5-A unit:
+The custom CM5 system enables common Realtek RTL815x and ASIX AX88179 USB
+Ethernet drivers. Production qualification must verify:
 
-1. Open **Detected Ethernet diagnostics** in the service portal.
-2. Record both hardware paths, driver names, MAC addresses, and USB
-   vendor/product IDs.
-3. Verify the physical native 1000M port is selected for the machine role and
-   the 2500M USB port is selected for the uplink role.
-4. Reboot repeatedly and verify each persisted hardware path resolves to the
-   same physical connector even if its kernel `ethN` name changes.
+- both physical Ethernet hardware paths and driver identity;
+- which connector is the site Internet port and which is the PLC port;
+- path stability across repeated boots;
+- DI1 GPIO identity and polarity;
+- fixed proxy behavior against a real PLC;
+- signed A/B OTA transport and rollback.
 
-Unassigned, missing, and conflicting Ethernet roles remain disabled. Firmware
-still must not be released for unattended deployment before the physical port
-identity and DI1 polarity have been verified on a production unit.
+A CM4 exposing only one Ethernet interface cannot satisfy the isolated two-port
+architecture without a second controller.
+
+## x86_64 QEMU integration boundary
+
+`MIX_TARGET=x86_64` packages the same target networking, settings, supervision,
+and `tailscale-rs` adapters into `nerves_system_x86_64`. Only GPIO and automatic
+Wi-Fi commissioning are replaced: stock QEMU has neither a service WLAN nor a
+physical GPIO. Integration-only modules are compiled from `integration/firmware`
+and are excluded from CM4/CM5 releases.
+
+The deterministic emulator topology is:
+
+```text
+QEMU Nerves firmware
+├── virtio WAN (fixed MAC and PCI path) -> QEMU user-mode Internet
+└── virtio PLC (different fixed MAC/path) -> isolated/restricted QEMU network
+```
+
+The harness flashes a real fwup disk, boots Nerves over a Unix serial socket,
+provisions roles by MAC-discovered hardware paths, and controls link state via
+QMP. It invokes `Tailscale.Native.load_key_file/1`, not merely application
+startup, to prove that the cross-compiled Rustler NIF loads under Nerves musl.
+The x86 build disables Rust's static musl CRT for the shared NIF and forces
+AWS-LC C objects to be position-independent.
+
+This lane validates firmware packaging, VintageNet, `/data` persistence, stable
+role resolution, supervision, and native loading. Protected live-tailnet tests
+and an isolated PLC protocol fixture are later layers. Physical CM4/CM5 tests
+remain authoritative for carrier drivers, Wi-Fi AP, GPIO, and electrical
+power-loss behavior.

@@ -1,22 +1,42 @@
 import Config
 
-# Rustler otherwise builds the Tailscale NIF for the host architecture. The
-# CM4 and the IPCBOX-CM5-A custom system both use 64-bit ARM.
-rust_target = "aarch64-unknown-linux-gnu"
-rust_linker = System.get_env("CC", "aarch64-nerves-linux-gnu-gcc")
-
-config :tailscale, Tailscale.Native,
-  target: rust_target,
-  env: [{"CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER", rust_linker}]
-
-{default_service_gpio, console_tty} =
+# Rustler otherwise builds the Tailscale NIF for the host architecture. CM4/CM5
+# use glibc AArch64 while the generic Nerves x86_64 system uses musl.
+{rust_target, linker_env, default_linker, default_service_gpio, console_tty} =
   Map.fetch!(
     %{
-      rpi4: {"GPIO17", "ttyS0"},
-      rpi5: {"GPIO23", "ttyAMA10"}
+      rpi4:
+        {"aarch64-unknown-linux-gnu", "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER",
+         "aarch64-nerves-linux-gnu-gcc", "GPIO17", "ttyS0"},
+      rpi5:
+        {"aarch64-unknown-linux-gnu", "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER",
+         "aarch64-nerves-linux-gnu-gcc", "GPIO23", "ttyAMA10"},
+      x86_64:
+        {"x86_64-unknown-linux-musl", "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER",
+         "x86_64-nerves-linux-musl-gcc", "emulated", "ttyS0"}
     },
     Mix.target()
   )
+
+rust_linker = System.get_env("CC", default_linker)
+
+rust_env =
+  [{linker_env, rust_linker}]
+  |> then(fn env ->
+    if Mix.target() == :x86_64 do
+      [
+        {"RUSTFLAGS", "-C target-feature=-crt-static"},
+        {"AWS_LC_SYS_TARGET_CFLAGS", "-fPIC"}
+        | env
+      ]
+    else
+      env
+    end
+  end)
+
+config :tailscale, Tailscale.Native,
+  target: rust_target,
+  env: rust_env
 
 config :plc_remote,
   settings_path: "/data/plc_remote/settings.json",
@@ -31,6 +51,14 @@ config :plc_remote,
   device_adapter: PlcRemote.Adapters.Target.Device,
   system_adapter: PlcRemote.Adapters.Target.System,
   tailscale_adapter: PlcRemote.Adapters.Target.Tailscale
+
+if Mix.target() == :x86_64 do
+  config :plc_remote,
+    auto_commissioning: false,
+    default_service_gpio: "emulated",
+    gpio_adapter: PlcRemote.Integration.GPIO,
+    recovery_auto_start: false
+end
 
 # Use Ringlogger as the logger backend and remove :console.
 # See https://ring-logger.hexdocs.pm/readme.html for more information on
@@ -86,9 +114,9 @@ config :nerves_ssh,
 
 # Network roles are intentionally separated:
 #
-#   * eth0/eth1 - disabled until their stable hardware paths are assigned to
-#                 machine-LAN and wired-uplink roles during commissioning
-#   * wlan0     - optional Internet uplink; scan-only until Wi-Fi is provisioned
+#   * eth0/eth1 - disabled until stable hardware paths are assigned to the
+#                 isolated PLC LAN and Ethernet Internet roles
+#   * wlan0     - setup/recovery access point only; never an Internet uplink
 #   * usb0      - local recovery/commissioning connection
 #
 # Both Ethernet ports fail closed so kernel enumeration cannot swap the PLC and
@@ -96,7 +124,7 @@ config :nerves_ssh,
 # every boot, disables all detected Ethernet interfaces, and only then applies
 # the assigned machine/uplink configurations.
 #
-# Update regulatory_domain to the deployment's ISO 3166-1 alpha-2 country code.
+# regulatory_domain controls only the local service access point.
 # See https://github.com/nerves-networking/vintage_net for more information.
 config :vintage_net,
   # PlcRemote.Configuration is the only persistence owner. Disabling

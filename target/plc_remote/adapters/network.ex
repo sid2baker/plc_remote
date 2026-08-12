@@ -1,12 +1,9 @@
 defmodule PlcRemote.Adapters.Target.Network do
   @moduledoc """
-  VintageNet boundary for target firmware.
+  Serialized VintageNet boundary for target firmware.
 
-  All configuration calls for one interface are serialized. VintageNet 0.13
-  accepts replacement configurations while `:configured`, `:configuring`, or
-  `:retrying`, but not while `:reconfiguring`; calling it in that transition can
-  crash the interface state machine. The lock and bounded wait make this
-  upstream state constraint explicit.
+  The Wi-Fi interface is reserved for the commissioning and recovery access
+  point. Normal Internet connectivity is Ethernet-only.
   """
 
   @behaviour PlcRemote.Adapters.Network
@@ -95,9 +92,7 @@ defmodule PlcRemote.Adapters.Target.Network do
     end
   end
 
-  defp parse_address(address) do
-    :inet.parse_ipv4_address(String.to_charlist(address))
-  end
+  defp parse_address(address), do: :inet.parse_ipv4_address(String.to_charlist(address))
 
   defp interface_kind("usb0"), do: :recovery
   defp interface_kind("eth" <> _suffix), do: :ethernet

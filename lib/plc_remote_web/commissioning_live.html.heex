@@ -1,0 +1,527 @@
+<%= if @handoff do %>
+  <section class="handoff" id="commissioning-handoff">
+    <div class="handoff-spinner" aria-hidden="true"></div>
+    <%= if @handoff == :verification do %>
+      <p class="eyebrow">FINAL VERIFICATION</p>
+      <h2>Verifying the remote connection</h2>
+      <p>
+        PLC Remote is checking Ethernet Internet and Tailscale while this setup Wi-Fi remains active.
+        This operation continues safely without the browser.
+      </p>
+      <div class="notice warning">
+        <strong>Do not remove power for three minutes.</strong>
+        On success the service Wi-Fi closes. On failure it remains available with the same name.
+      </div>
+    <% else %>
+      <p class="eyebrow">SERVICE MODE</p>
+      <h2>The service Wi-Fi is shutting down</h2>
+      <p>
+        Unverified onsite changes were discarded. The service access point is being disabled.
+      </p>
+    <% end %>
+  </section>
+<% else %>
+  <section class="intro">
+    <div>
+      <p class="eyebrow">
+        {if @settings.commissioned, do: "ONSITE SERVICE", else: "FIRST-BOOT SETUP"}
+      </p>
+      <h2>
+        {if @settings.commissioned,
+          do: "Inspect or update this gateway",
+          else: "Connect this gateway in three steps"}
+      </h2>
+      <p>
+        The setup stays reachable while you select and save settings. Nothing disables the access point
+        until you explicitly start the final test.
+      </p>
+    </div>
+    <dl class="facts">
+      <div>
+        <dt>Service Wi-Fi</dt><dd>{@service.ssid || "Starting…"}</dd>
+      </div>
+      <div>
+        <dt>Portal</dt><dd>{@service.address}</dd>
+      </div>
+      <div>
+        <dt>Session</dt><dd>{remaining_label(@service)}</dd>
+      </div>
+    </dl>
+  </section>
+
+  <div class="status-overview" aria-label="Gateway status">
+    <span class={["status", if(@network.connection == :internet, do: "ok", else: "pending")]}>Network: {if @network.connection ==
+                                                                                                             :internet,
+                                                                                                           do:
+                                                                                                             "Internet",
+                                                                                                           else:
+                                                                                                             "Not online"}</span>
+    <span class={["status", if(@tailscale.state == :connected, do: "ok", else: "pending")]}>Tailscale: {Phoenix.Naming.humanize(
+      @tailscale.state
+    )}</span>
+    <span class={["status", if(@service.mode == :recovery, do: "ok", else: "pending")]}>AP: {if @service.mode ==
+                                                                                                  :recovery,
+                                                                                                do:
+                                                                                                  "Protected service",
+                                                                                                else:
+                                                                                                  "Open setup"}</span>
+  </div>
+
+  <.notice :if={@service.mode == :automatic} class="warning">
+    <strong>This first-boot Wi-Fi is intentionally open.</strong>
+    Complete setup without entering unrelated credentials or secrets.
+  </.notice>
+
+  <.notice :if={@notice} class="success">{@notice}</.notice>
+
+  <.notice :if={map_size(@errors) > 0} class="failure" role="alert">
+    <strong>The step was not saved.</strong>
+    Correct the highlighted fields below.
+    <p :if={@errors["settings"]}>{@errors["settings"]}</p>
+  </.notice>
+
+  <.notice
+    :if={@service.verification.state == :failed}
+    id="final-verification-failed"
+    class="failure"
+  >
+    <strong>The final test did not pass, so the setup Wi-Fi remains active.</strong>
+    Review the checks and settings, then try again. {@service.verification.error}
+  </.notice>
+
+  <nav class="wizard-steps" aria-label="Setup steps">
+    <.link patch="/?step=network" class={if @step == "network", do: "active"}>
+      <span>1</span><div><strong>Internet</strong><small>Ethernet</small></div>
+    </.link>
+    <.link patch="/?step=tailscale" class={if @step == "tailscale", do: "active"}>
+      <span>2</span><div><strong>Tailscale</strong><small>Remote identity</small></div>
+    </.link>
+    <.link patch="/?step=verify" class={if @step == "verify", do: "active"}>
+      <span>3</span><div><strong>Verify</strong><small>Test and finish</small></div>
+    </.link>
+    <.link
+      :if={@settings.commissioned}
+      patch="/?step=advanced"
+      class={if @step == "advanced", do: "active"}
+    >
+      <span>4</span><div><strong>Service</strong><small>Onsite recovery</small></div>
+    </.link>
+  </nav>
+
+  <section :if={@step == "network"} class="wizard-panel" id="network-step">
+    <div class="panel-heading">
+      <div>
+        <p class="eyebrow">STEP 1</p><h2>Connect PLC Remote to the Internet</h2>
+      </div>
+      <p>Connect one Ethernet port to a router or network with Internet access.</p>
+    </div>
+
+    <.form
+      for={%{}}
+      as={:settings}
+      id="network-form"
+      phx-submit="save-network"
+      phx-hook="DynamicFields"
+      autocomplete="off"
+    >
+      <input type="hidden" name="settings[uplink_mode]" value="ethernet" />
+
+      <div class="section-block">
+        <h3>Internet cable</h3>
+        <div class="form-grid two">
+          <label>
+            Which Ethernet port is connected to the Internet?
+            <select name="settings[ethernet_interface_hw_path]">
+              <option value="">Select a detected Ethernet port</option>
+              <option
+                :for={
+                  option <-
+                    interface_options(
+                      @network.interfaces,
+                      effective_port_path(
+                        @draft,
+                        "ethernet_interface_hw_path",
+                        @settings.uplink.ethernet.interface_hw_path,
+                        @network.interfaces,
+                        :uplink
+                      )
+                    )
+                }
+                value={option.path}
+                selected={
+                  selected?(
+                    effective_port_path(
+                      @draft,
+                      "ethernet_interface_hw_path",
+                      @settings.uplink.ethernet.interface_hw_path,
+                      @network.interfaces,
+                      :uplink
+                    ),
+                    option.path
+                  )
+                }
+              >
+                {option.label}
+              </option>
+            </select>
+            <.field_error errors={@errors} field="ethernet_interface_hw_path" />
+            <small>The recommended port is selected automatically when two ports are detected.</small>
+          </label>
+          <label>
+            IP assignment
+            <select name="settings[ethernet_method]">
+              <option
+                value="dhcp"
+                selected={
+                  selected?(
+                    value(@draft, "ethernet_method", @settings.uplink.ethernet.method),
+                    :dhcp
+                  )
+                }
+              >
+                DHCP — recommended
+              </option>
+              <option
+                value="static"
+                selected={
+                  selected?(
+                    value(@draft, "ethernet_method", @settings.uplink.ethernet.method),
+                    :static
+                  )
+                }
+              >
+                Static
+              </option>
+            </select>
+          </label>
+        </div>
+        <details
+          data-visible-when="ethernet_method:static"
+          hidden={
+            value(@draft, "ethernet_method", @settings.uplink.ethernet.method) not in [
+              :static,
+              "static"
+            ]
+          }
+          open
+        >
+          <summary>Static Ethernet address</summary>
+          <div class="form-grid two">
+            <label>Address<input
+              name="settings[ethernet_address]"
+              value={value(@draft, "ethernet_address", @settings.uplink.ethernet.address)}
+            /><.field_error errors={@errors} field="ethernet_address" /></label>
+            <label>Prefix<input
+              name="settings[ethernet_prefix_length]"
+              type="number"
+              min="1"
+              max="30"
+              value={
+                value(@draft, "ethernet_prefix_length", @settings.uplink.ethernet.prefix_length)
+              }
+            /><.field_error errors={@errors} field="ethernet_prefix_length" /></label>
+            <label>Gateway<input
+              name="settings[ethernet_gateway]"
+              value={value(@draft, "ethernet_gateway", @settings.uplink.ethernet.gateway)}
+            /><.field_error errors={@errors} field="ethernet_gateway" /></label>
+            <label>DNS server<input
+              name="settings[ethernet_name_server]"
+              value={value(@draft, "ethernet_name_server", @settings.uplink.ethernet.name_server)}
+            /><.field_error errors={@errors} field="ethernet_name_server" /></label>
+          </div>
+        </details>
+      </div>
+
+      <div :if={@network_saved or @settings.uplink.mode != :disabled} class="connection-feedback">
+        <.notice :if={@network.connection == :internet} class="success">
+          <strong>Internet connection works.</strong> Continue to Tailscale.
+        </.notice>
+        <.notice :if={@network.connection != :internet} class="warning">
+          Waiting for Internet over Ethernet. Check the cable and DHCP server; the status updates automatically.
+        </.notice>
+      </div>
+
+      <div class="panel-actions split">
+        <button type="submit" class="primary" phx-disable-with="Applying…">Save and test network</button>
+        <.link
+          :if={network_ready_to_continue?(@settings, @network)}
+          patch="/?step=tailscale"
+          class="button secondary"
+        >Continue to Tailscale</.link>
+      </div>
+    </.form>
+  </section>
+
+  <section :if={@step == "tailscale"} class="wizard-panel" id="tailscale-step">
+    <div class="panel-heading">
+      <div>
+        <p class="eyebrow">STEP 2</p><h2>Enroll this gateway in Tailscale</h2>
+      </div>
+      <p>
+        The auth key is consumed once and is never written to the settings file or returned to the browser.
+      </p>
+    </div>
+
+    <.form for={%{}} as={:settings} phx-submit="save-tailscale" autocomplete="off">
+      <input type="hidden" name="settings[tailscale_enabled]" value="true" />
+
+      <div class="section-block auth-key-block">
+        <label>
+          Tailscale auth key
+          <input
+            name="settings[tailscale_auth_key]"
+            type="password"
+            placeholder="Paste tskey-auth-…"
+            autocomplete="off"
+          />
+          <small>The key is used once, filtered from logs, and never saved in settings.</small>
+        </label>
+        <.field_error errors={@errors} field="tailscale_enabled" />
+      </div>
+
+      <div class="connection-feedback">
+        <.notice :if={@tailscale.state == :connected} class="success">
+          <strong>Joined the tailnet successfully.</strong>
+          Tailnet address: <code>{@tailscale.tailnet_ipv4}</code>.
+        </.notice>
+        <.notice :if={@tailscale.state == :connecting} class="warning">
+          Connecting to Tailscale now…
+        </.notice>
+        <.notice :if={@tailscale.state == :waiting_for_network} class="warning">
+          Waiting for an Internet connection before joining Tailscale.
+        </.notice>
+        <.notice
+          :if={@tailscale.state == :error}
+          class="failure"
+        >
+          <strong>Tailscale could not connect.</strong> {@tailscale.reason}
+          <span :if={@tailscale.retry_in_seconds}>Retrying in {@tailscale.retry_in_seconds} seconds.</span>
+        </.notice>
+      </div>
+
+      <div class="panel-actions split">
+        <.link patch="/?step=network" class="button secondary">Back</.link>
+        <div class="action-group">
+          <button type="submit" class="primary" phx-disable-with="Connecting…">Connect Tailscale</button>
+          <.link
+            :if={tailscale_ready_to_continue?(@settings, @network, @tailscale)}
+            patch="/?step=verify"
+            class="button secondary"
+          >Continue to final test</.link>
+        </div>
+      </div>
+    </.form>
+  </section>
+
+  <section :if={@step == "verify"} class="wizard-panel" id="verify-step">
+    <div class="panel-heading">
+      <div>
+        <p class="eyebrow">STEP 3</p><h2>Verify before closing setup Wi-Fi</h2>
+      </div>
+      <p>
+        Checks update automatically while the setup Wi-Fi remains available.
+      </p>
+    </div>
+
+    <div class="check-list">
+      <.check_row
+        state={check_state(@network.connection == :internet)}
+        label="Internet connectivity"
+        detail={
+          if @network.connection == :internet,
+            do: "An Internet route is active.",
+            else: "Waiting for the selected Ethernet port to reach the Internet."
+        }
+      />
+      <.check_row
+        state={tailscale_check_state(@tailscale)}
+        label="Tailscale"
+        detail={
+          @tailscale.reason ||
+            if(@tailscale.tailnet_ipv4,
+              do: "Joined with address #{@tailscale.tailnet_ipv4}.",
+              else: "Waiting to join the tailnet."
+            )
+        }
+      />
+    </div>
+
+    <div :if={@tailscale.retry_in_seconds} class="status-detail">
+      Tailscale reconnect attempt {@tailscale.failure_count} in {@tailscale.retry_in_seconds} seconds.
+    </div>
+    <div :if={@network.last_error} class="notice failure">
+      Network configuration: {@network.last_error}
+    </div>
+    <.field_error errors={@errors} field="finish" />
+
+    <div class="finish-box">
+      <h3>Final handoff</h3>
+      <p>
+        The gateway verifies Ethernet Internet and Tailscale before closing the setup AP. A failure leaves
+        the AP active and, during onsite service, restores the previous settings.
+      </p>
+      <button
+        type="button"
+        class="primary finish"
+        phx-click="finish-commissioning"
+        disabled={!ready_to_test?(@settings)}
+      >
+        {if @settings.commissioned,
+          do: "Test connection and close service Wi-Fi",
+          else: "Finish setup"}
+      </button>
+      <small :if={!ready_to_test?(@settings)}>Connect to the Internet and configure Tailscale first.</small>
+    </div>
+
+    <div class="panel-actions split">
+      <.link patch="/?step=tailscale" class="button secondary">Back</.link>
+    </div>
+
+    <div :if={@settings.commissioned} class="remote-result">
+      <strong>Commissioned</strong>
+      <p :if={@tailscale.tailnet_ipv4}>
+        Tailnet address: <code>{@tailscale.tailnet_ipv4}</code>
+      </p>
+    </div>
+  </section>
+
+  <section
+    :if={@step == "advanced" and @settings.commissioned}
+    class="wizard-panel"
+    id="advanced-step"
+  >
+    <div class="panel-heading">
+      <div>
+        <p class="eyebrow">ONSITE SERVICE</p><h2>Recovery access</h2>
+      </div>
+      <p>These settings control the physical GPIO entry point and bounded recovery behavior.</p>
+    </div>
+
+    <.form for={%{}} as={:settings} phx-submit="save-advanced" autocomplete="off">
+      <div :if={@service.gpio_error} class="notice failure">
+        Service GPIO unavailable: {@service.gpio_error}
+      </div>
+      <div class="form-grid two">
+        <label>GPIO specification<input
+          name="settings[service_gpio_spec]"
+          value={value(@draft, "service_gpio_spec", @settings.service.gpio_spec)}
+          required
+        /><.field_error errors={@errors} field="service_gpio_spec" /></label>
+        <label>
+          Active level
+          <select name="settings[service_active_level]">
+            <option
+              value="0"
+              selected={
+                selected?(
+                  value(@draft, "service_active_level", @settings.service.active_level),
+                  0
+                )
+              }
+            >
+              Low / 0
+            </option>
+            <option
+              value="1"
+              selected={
+                selected?(
+                  value(@draft, "service_active_level", @settings.service.active_level),
+                  1
+                )
+              }
+            >
+              High / 1
+            </option>
+          </select>
+        </label>
+        <label>Hold time in seconds<input
+          name="settings[service_hold_seconds]"
+          type="number"
+          min="0"
+          max="30"
+          value={value(@draft, "service_hold_seconds", div(@settings.service.hold_ms, 1_000))}
+          required
+        /><.field_error errors={@errors} field="service_hold_seconds" /></label>
+        <label>Service timeout in minutes<input
+          name="settings[service_timeout_minutes]"
+          type="number"
+          min="1"
+          max="120"
+          value={
+            value(@draft, "service_timeout_minutes", div(@settings.service.timeout_ms, 60_000))
+          }
+          required
+        /><.field_error errors={@errors} field="service_timeout_minutes" /></label>
+        <label>Service SSID prefix<input
+          name="settings[service_ssid_prefix]"
+          maxlength="20"
+          value={value(@draft, "service_ssid_prefix", @settings.service.ssid_prefix)}
+          required
+        /><.field_error errors={@errors} field="service_ssid_prefix" /></label>
+        <label>New service Wi-Fi password<input
+          name="settings[service_psk]"
+          type="password"
+          minlength="8"
+          maxlength="63"
+          placeholder="Leave blank to keep current password"
+          autocomplete="new-password"
+        /><.field_error errors={@errors} field="service_psk" /></label>
+      </div>
+
+      <details>
+        <summary>Automatic recovery reboot</summary>
+        <div class="toggle-line">
+          <input type="hidden" name="settings[recovery_auto_reboot]" value="false" />
+          <input
+            id="recovery-auto-reboot"
+            type="checkbox"
+            name="settings[recovery_auto_reboot]"
+            value="true"
+            checked={checked?(@draft, "recovery_auto_reboot", @settings.recovery.auto_reboot)}
+          />
+          <label for="recovery-auto-reboot">Allow bounded reboot recovery</label>
+        </div>
+        <div class="form-grid two">
+          <label>Reboot after offline minutes<input
+            name="settings[recovery_reboot_after_minutes]"
+            type="number"
+            min="15"
+            max="1440"
+            value={
+              value(
+                @draft,
+                "recovery_reboot_after_minutes",
+                div(@settings.recovery.reboot_after_ms, 60_000)
+              )
+            }
+            required
+          /><.field_error errors={@errors} field="recovery_reboot_after_minutes" /></label>
+          <label>Maximum consecutive reboots<input
+            name="settings[recovery_max_consecutive_reboots]"
+            type="number"
+            min="0"
+            max="5"
+            value={
+              value(
+                @draft,
+                "recovery_max_consecutive_reboots",
+                @settings.recovery.max_consecutive_reboots
+              )
+            }
+            required
+          /><.field_error errors={@errors} field="recovery_max_consecutive_reboots" /></label>
+        </div>
+      </details>
+
+      <div class="panel-actions">
+        <button type="submit" class="primary">Save service settings</button>
+      </div>
+    </.form>
+
+    <div class="service-exit">
+      <h3>Close onsite service mode</h3>
+      <p>The service access point will be disabled immediately.</p>
+      <button type="button" class="secondary" phx-click="exit-service">Exit service mode</button>
+    </div>
+  </section>
+<% end %>

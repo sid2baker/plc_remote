@@ -50,7 +50,10 @@ defmodule PlcRemote.TcpProxyTest do
         :gen_tcp.close(socket)
       end)
 
-    proxy = spawn_link(fn -> TcpProxy.relay(stream, "127.0.0.1", port, TailscaleAdapter) end)
+    proxy =
+      spawn_link(fn ->
+        TcpProxy.relay(stream, "127.0.0.1", port, "lo", TailscaleAdapter)
+      end)
 
     assert_receive {:plc_received, "from-tailnet"}, 2_000
     assert_receive {:tailscale_sent, "from-plc"}, 2_000

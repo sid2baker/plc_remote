@@ -24,10 +24,10 @@ defmodule PlcRemote.NetworkTest do
     assert_raise ArgumentError, fn -> Network.machine_lan_config({192, 168, 10, 2}, 33) end
   end
 
-  test "resolves Ethernet roles by hardware path and starts from a disabled baseline" do
+  test "resolves both Ethernet roles by hardware path from a disabled baseline" do
     interfaces = [
-      %{ifname: "eth1", hw_path: "/devices/usb/uplink", kind: :ethernet},
-      %{ifname: "eth0", hw_path: "/devices/platform/machine", kind: :ethernet}
+      %{ifname: "eth1", hw_path: "/devices/usb/internet", kind: :ethernet},
+      %{ifname: "eth0", hw_path: "/devices/platform/plc", kind: :ethernet}
     ]
 
     settings = Settings.defaults(service_psk: "commissioning-key")
@@ -35,9 +35,9 @@ defmodule PlcRemote.NetworkTest do
     assert {:ok, settings, nil} =
              Settings.update(settings, %{
                "machine_enabled" => "true",
-               "machine_interface_hw_path" => "/devices/platform/machine",
+               "machine_interface_hw_path" => "/devices/platform/plc",
                "uplink_mode" => "ethernet",
-               "ethernet_interface_hw_path" => "/devices/usb/uplink"
+               "ethernet_interface_hw_path" => "/devices/usb/internet"
              })
 
     assert Network.ethernet_baseline(interfaces) == [
@@ -45,12 +45,12 @@ defmodule PlcRemote.NetworkTest do
              {"eth0", Network.disabled_ethernet_config()}
            ]
 
-    assert {:ok, [{"eth0", machine}, {"eth1", uplink}]} =
+    assert {:ok, [{"eth0", machine}, {"eth1", internet}]} =
              Network.ethernet_configurations(settings, interfaces)
 
     assert machine.ipv4.method == :static
     refute Map.has_key?(machine.ipv4, :gateway)
-    assert uplink.ipv4.method == :dhcp
+    assert internet.ipv4.method == :dhcp
   end
 
   test "fails closed when an assigned Ethernet interface is not detected" do
@@ -66,45 +66,34 @@ defmodule PlcRemote.NetworkTest do
              Network.ethernet_configurations(settings, [])
   end
 
-  test "builds a Wi-Fi fallback uplink independently from wired Ethernet" do
-    wifi = %{
-      method: :dhcp,
-      ssid: "Plant-WAN",
-      psk: "fallback-secret"
-    }
+  test "reports only active Ethernet roles and the fixed service interfaces" do
+    interfaces = [%{ifname: "eth0", hw_path: "/devices/internet", kind: :ethernet}]
+    settings = Settings.defaults(service_psk: "commissioning-key")
 
-    config = Network.wifi_uplink_config(wifi, "DE")
-    [network] = config.vintage_net_wifi.networks
+    assert {:ok, settings, nil} =
+             Settings.update(settings, %{
+               "uplink_mode" => "ethernet",
+               "ethernet_interface_hw_path" => "/devices/internet"
+             })
 
-    assert network.ssid == "Plant-WAN"
-    assert network.key_mgmt == :wpa_psk
-    assert config.ipv4.method == :dhcp
-  end
-
-  test "builds an open first-boot commissioning AP" do
-    service = %{
-      address: "192.168.50.1",
-      prefix_length: 24,
-      psk: "commissioning-key"
-    }
-
-    config = Network.service_access_point_config(service, "PLC-Remote-SETUP", "DE", :open)
-    [access_point] = config.vintage_net_wifi.networks
-
-    assert access_point == %{
-             mode: :ap,
-             ssid: "PLC-Remote-SETUP",
-             key_mgmt: :none
+    assert Network.role_ifnames(settings, interfaces) == %{
+             internet_uplink: "eth0",
+             machine_lan: nil,
+             recovery: "usb0",
+             service_ap: "wlan0"
            }
   end
 
-  test "builds a WPA2 service AP with captive DNS and DHCP" do
-    service = %{
-      address: "192.168.50.1",
-      prefix_length: 24,
-      psk: "commissioning-key"
-    }
+  test "builds an open first-boot commissioning AP" do
+    service = %{address: "192.168.50.1", prefix_length: 24, psk: "commissioning-key"}
+    config = Network.service_access_point_config(service, "PLC-Remote-SETUP", "DE", :open)
+    [access_point] = config.vintage_net_wifi.networks
 
+    assert access_point == %{mode: :ap, ssid: "PLC-Remote-SETUP", key_mgmt: :none}
+  end
+
+  test "builds a WPA2 recovery AP with captive DNS and DHCP" do
+    service = %{address: "192.168.50.1", prefix_length: 24, psk: "commissioning-key"}
     config = Network.service_access_point_config(service, "PLC-Remote-1234", "DE")
     [access_point] = config.vintage_net_wifi.networks
 

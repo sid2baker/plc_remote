@@ -20,6 +20,10 @@
 ## See https://nerves-runtime.hexdocs.pm/readme.html#assisted-firmware-validation-and-automatic-revert
 -env HEART_INIT_TIMEOUT 600
 
+## Required acknowledgement for the intentionally selected experimental tailscale-rs client.
+## This must exist before its native library starts; setting it only at connect time is too late.
+-env TS_RS_EXPERIMENT this_is_unstable_software
+
 # Allow time warps so that the Erlang system time can more closely match the
 # OS system time.
 +C multi_time_warp

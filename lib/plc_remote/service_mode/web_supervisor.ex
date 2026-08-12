@@ -14,14 +14,14 @@ defmodule PlcRemote.ServiceMode.WebSupervisor do
   def start_server(ip, port) do
     spec =
       Bandit.child_spec(
-        plug: PlcRemoteWeb.Router,
+        plug: PlcRemoteWeb.Endpoint,
         ip: ip,
         port: port,
         startup_log: false,
         http_options: [compress: true],
         http_1_options: [max_header_length: 8_192, max_request_line_length: 4_096],
         http_2_options: [enabled: false],
-        websocket_options: [enabled: false]
+        websocket_options: [enabled: true, max_frame_size: 64_000]
       )
 
     spec = Supervisor.child_spec(spec, restart: :temporary)

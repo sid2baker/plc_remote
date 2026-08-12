@@ -1,0 +1,12 @@
+diff --git a/ts_runtime/src/netmon.rs b/ts_runtime/src/netmon.rs
+index 2065dba..f7a749b 100644
+--- a/ts_runtime/src/netmon.rs
++++ b/ts_runtime/src/netmon.rs
+@@ -196,4 +196,3 @@ impl Message<StreamMessage<Vec<io::Result<Event>>, (), ()>> for NetmonActor {
+-        self.env
+-            .publish(Arc::new(self.state.clone()))
+-            .await
+-            .unwrap();
++        if let Err(error) = self.env.publish(Arc::new(self.state.clone())).await {
++            tracing::debug!(?error, "ignored netmon update after runtime shutdown");
++        }

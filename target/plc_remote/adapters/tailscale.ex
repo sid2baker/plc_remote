@@ -5,6 +5,7 @@ defmodule PlcRemote.Adapters.Target.Tailscale do
 
   @impl true
   def connect(settings, auth_key) do
+    # vm.args sets this before the NIF loads. Repeat it for direct adapter use in tests and IEx.
     System.put_env("TS_RS_EXPERIMENT", "this_is_unstable_software")
     key_file = Application.fetch_env!(:plc_remote, :tailscale_key_file)
     directory = Path.dirname(key_file)
@@ -20,8 +21,7 @@ defmodule PlcRemote.Adapters.Target.Tailscale do
     with {:ok, device} <- Tailscale.connect(key_file, options),
          :ok <- protect_existing_key_file(key_file),
          {:ok, tailnet_ipv4} <- Tailscale.ipv4_addr(device),
-         {:ok, listener} <-
-           Tailscale.Tcp.listen(device, :ip4, settings.tailscale.listen_port),
+         {:ok, listener} <- maybe_listen(device, settings),
          :ok <- protect_existing_key_file(key_file) do
       {:ok, device, listener, tailnet_ipv4}
     end
@@ -45,6 +45,20 @@ defmodule PlcRemote.Adapters.Target.Tailscale do
       {:error, :enoent} -> :ok
       {:error, _reason} = error -> error
     end
+  end
+
+  defp maybe_listen(device, settings) do
+    network = PlcRemote.NetworkManager.status()
+
+    case PlcRemote.ProxyPolicy.machine_ifname(settings, network) do
+      ifname when is_binary(ifname) ->
+        Tailscale.Tcp.listen(device, :ip4, settings.tailscale.listen_port)
+
+      nil ->
+        {:ok, nil}
+    end
+  catch
+    :exit, _reason -> {:ok, nil}
   end
 
   defp maybe_add_tags(options, []), do: options

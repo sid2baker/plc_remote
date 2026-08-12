@@ -16,8 +16,7 @@ defmodule PlcRemote.ServiceMode.Platform do
           :ok | {:error, term()}
   def enter_access_point(service, ssid, regulatory_domain, security) do
     config = Network.service_access_point_config(service, ssid, regulatory_domain, security)
-
-    ifname = Network.interface(:wifi_uplink)
+    ifname = Network.interface(:service_ap)
     adapter = network_adapter()
 
     with :ok <- adapter.configure(ifname, config, persist: false) do
@@ -25,9 +24,13 @@ defmodule PlcRemote.ServiceMode.Platform do
     end
   end
 
-  @spec leave_access_point() :: :ok
+  @spec leave_access_point() :: :ok | {:error, term()}
   def leave_access_point do
-    PlcRemote.NetworkManager.restore_wifi()
+    network_adapter().configure(
+      Network.interface(:service_ap),
+      %{type: VintageNetWiFi},
+      persist: false
+    )
   end
 
   @spec serial_number() :: String.t()
