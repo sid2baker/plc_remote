@@ -105,8 +105,8 @@ The v2 implementation preserves the product architecture:
 - every Ethernet application is disable-first and unassigned ports stay off;
 - PLC configuration has no gateway or DNS;
 - Wi-Fi is a WPA2 service AP only;
-- only confirmed-high IPCBOX IN1 disables the service AP; IN2 can only request
-  a bounded reconnect;
+- the service AP remains continuously requested; IPCBOX IN1 is diagnostic only
+  and IN2 can only request a bounded reconnect;
 - IPCBOX outputs initialize off and remain non-safety indications;
 - remote PLC access is one fixed userspace TCP destination, never subnet routing
   or bridging;

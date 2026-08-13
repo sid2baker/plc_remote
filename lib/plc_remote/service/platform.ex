@@ -5,6 +5,13 @@ defmodule PlcRemote.Service.Platform do
 
   @spec enter_access_point(map(), String.t(), String.t()) :: :ok | {:error, term()}
   def enter_access_point(service, ssid, regulatory_domain) do
+    case Application.get_env(:plc_remote, :service_ap_adapter) do
+      nil -> configure_access_point(service, ssid, regulatory_domain)
+      adapter -> adapter.activate_service_access_point(service, ssid, regulatory_domain)
+    end
+  end
+
+  defp configure_access_point(service, ssid, regulatory_domain) do
     config = Network.service_access_point_config(service, ssid, regulatory_domain)
     ifname = Network.interface(:service_ap)
     adapter = network_adapter()

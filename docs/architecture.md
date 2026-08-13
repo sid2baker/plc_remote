@@ -24,18 +24,11 @@ RTL815x, AX88179, CDC Ethernet/NCM and R8169 drivers for qualification on other
 carriers. If only one controller enumerates, the UI reports that Internet can work but isolated PLC
 access needs a second controller; it never invents or assumes `eth1`.
 
-## Service switch and routing
+## Service access and routing
 
-IPCBOX IN1 directly controls the AP after a short debounce. The isolated carrier
-input inverts the external terminal level:
-
-```text
-terminal high (>2 V) -> GPIO low  -> AP on
-terminal low/open     -> GPIO high -> AP off
-GPIO unreadable                    -> AP on
-```
-
-Only a confirmed inactive GPIO level may remove onsite service access. The AP always uses the
+The service AP is continuously enabled. IPCBOX IN1 remains an observed,
+inverted isolated input for diagnostics, but no high, low/open, unavailable, or
+unreadable state disables onsite service access. The AP always uses the
 per-device WPA2 key. There is no first-boot open AP, hold timer, inactivity
 timeout, final handoff, or browser-owned lifecycle.
 
@@ -48,8 +41,9 @@ Internet Ethernet -> wlan0             -> RELATED,ESTABLISHED only
 wlan0 -> every other forwarding path   -> REJECT
 ```
 
-The rules and IPv4 forwarding are removed when the isolated IN1 terminal goes low/open. IPv6 forwarding
-remains disabled. No service traffic can route to the PLC Ethernet role.
+The rules and IPv4 forwarding remain scoped to the active AP and configured
+Internet role. IPv6 forwarding remains disabled. No service traffic can route
+to the PLC Ethernet role.
 
 ## Configuration UI
 
@@ -94,9 +88,9 @@ PlcRemote.Supervisor (:rest_for_one)
 └── Firmware.Runtime
 ```
 
-The service supervisor owns the web runtime, temporary Bandit listener, IN1
-resource and Service FSM. Restarting it re-reads IN1 and restores the requested
-state.
+The service supervisor owns the web runtime, temporary Bandit listener,
+diagnostic IN1 resource, and Service FSM. Restarting it restores the AP and
+reopens IN1 observation.
 
 ## Security invariants
 
@@ -106,5 +100,5 @@ state.
 - Bind PLC egress to the resolved PLC interface.
 - Open no PLC listener until the PLC role is enabled, resolved and applied.
 - Use `wlan0` only as a WPA2 AP, never as a station.
-- Enable service routing only while IN1 requests the AP.
+- Enable service routing only while the continuously requested AP is active.
 - Keep IPv6 forwarding disabled.

@@ -22,7 +22,7 @@ defmodule PlcRemote.SupervisionTest do
            end)
   end
 
-  test "service boundary restores switch-controlled AP after runtime crash" do
+  test "service boundary restores continuously enabled AP after runtime crash" do
     previous_service = Process.whereis(PlcRemote.Service.Runtime)
     previous_web = Process.whereis(PlcRemote.Service.WebSupervisor)
     previous_runtime = Process.whereis(PlcRemote.Service.WebRuntimeSupervisor)

@@ -10,16 +10,10 @@
 
 ## Local service access
 
-IPCBOX IN1 directly controls the WPA2 service WLAN. The carrier's isolated
-input inverts the external terminal level:
-
-- terminal high (>2 V, GPIO low): WLAN on;
-- terminal low/open (<0.9 V, GPIO high): WLAN off;
-- unreadable/unavailable GPIO: WLAN on.
-
-There is a short debounce for contact bounce and no hold duration or timeout.
-Use the cabinet service switch to drive isolated IN1 high. Retrieve the per-device WLAN
-credential through local UART/USB IEx:
+The WPA2 service WLAN is continuously enabled. IPCBOX IN1 is observed for
+diagnostics but does not control the WLAN; terminal high, terminal low/open,
+and unreadable/unavailable GPIO states all leave it on. Retrieve the per-device
+WLAN credential through local UART/USB IEx:
 
 ```elixir
 PlcRemote.Configuration.service_credentials()
@@ -102,7 +96,7 @@ plc = PlcRemote.Configuration.current().machine.plc_address
 
 ## Carrier I/O
 
-- IN1 / GPIO23: inverted isolated input; external high enables the service WLAN.
+- IN1 / GPIO23: inverted isolated input observed for diagnostics only.
 - IN2 / GPIO24: hold three seconds for one rate-limited Tailscale reconnect.
 - OUT1 / GPIO27: remote PLC path ready.
 - OUT2 / GPIO22: service WLAN active.
@@ -144,7 +138,7 @@ Before deployment, verify on CM5-equipped IPCBOX-CM5-A hardware:
 - both Ethernet controllers' stable hardware paths;
 - actual driver identity and speed;
 - IN1/IN2 polarity and debounce;
-- WPA2 AP enable/disable from the cabinet switch;
+- WPA2 AP remains active for high, low/open, and unavailable IN1 states;
 - service-client Internet access and denied PLC-subnet routing;
 - Tailscale candidate failure followed by a successful retry;
 - fixed PLC proxy traffic and real PLC timing;

@@ -12,7 +12,7 @@ PLC Remote has three physical network roles:
 
 1. **Internet Ethernet** — connects to the site router and Tailscale.
 2. **PLC Ethernet** — isolated static LAN connected only to the PLC.
-3. **Service Wi-Fi** — WPA2 local service AP controlled directly by IPCBOX IN1.
+3. **Service Wi-Fi** — WPA2 local service AP kept continuously enabled.
 
 It never bridges or advertises the PLC subnet. While the service AP is active,
 it NATs only `wlan0` traffic to the configured Internet Ethernet interface;
@@ -48,13 +48,12 @@ not cross the proxy.
 
 ## Configuration
 
-1. Put the cabinet service switch in its active position so the isolated IN1 terminal is high.
-2. Join the WPA2 `PLC-Remote-<serial>` WLAN.
-3. Open `http://plc.setup/` or `http://192.168.50.1/`.
-4. Inspect the live list of detected Ethernet controllers and cable state.
-5. Select DHCP or enter a static Internet address if the plant requires it.
-6. Configure the separate PLC controller when a second controller is detected.
-7. Paste a one-use Tailscale auth key and select **Test key and connect**.
+1. Join the WPA2 `PLC-Remote-<serial>` WLAN.
+2. Open `http://plc.setup/` or `http://192.168.50.1/`.
+3. Inspect the live list of detected Ethernet controllers and cable state.
+4. Select DHCP or enter a static Internet address if the plant requires it.
+5. Configure the separate PLC controller when a second controller is detected.
+6. Paste a one-use Tailscale auth key and select **Test key and connect**.
 
 The auth key is checked for a plausible format and used against a temporary
 candidate identity. Failed authentication leaves the saved configuration
@@ -103,19 +102,15 @@ plc = PlcRemote.Configuration.current().machine.plc_address
 :ok = S7.close(client)
 ```
 
-## Service switch
+## Service access
 
-IPCBOX IN1 directly owns the service AP:
-
-- isolated terminal high (>2 V, GPIO reads low): AP on;
-- isolated terminal low/open (<0.9 V, GPIO reads high): AP off;
-- unavailable or unreadable GPIO: AP on, so local recovery remains possible.
+The service AP is continuously enabled. IPCBOX IN1 is observed for diagnostics
+but no high, low, open, unavailable, or unreadable IN1 state disables the AP.
 
 IN1 is GPIO23 (CM5 label `PIN16`). The carrier isolation inverts the external
 terminal, as documented by Waveshare; the GPIO input is opened without an
-internal pull resistor. Input changes
-are debounced for contact bounce; there is no hold timer or inactivity timeout.
-The service network is `192.168.50.0/24` and uses the per-device WPA2 key.
+internal pull resistor. The service network is `192.168.50.0/24` and uses the
+per-device WPA2 key.
 
 The remaining carrier I/O has deliberately narrow appliance semantics:
 
@@ -222,7 +217,7 @@ Local portal preview:
 
 ```sh
 iex -S mix
-# The host adapter treats unavailable IN1 as AP-on.
+# The service AP is continuously enabled; host IN1 is diagnostic only.
 # http://127.0.0.1:4000/
 ```
 

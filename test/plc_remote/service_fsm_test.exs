@@ -14,14 +14,12 @@ defmodule PlcRemote.Service.FSMTest do
     assert status.ssid == "PLC-Remote-HOST"
   end
 
-  test "only a confirmed non-active GPIO level disables the service WLAN" do
-    set_gpio(%PlcRemote.Service.GPIOState{handle: self(), asserted?: false})
-    Service.recheck()
-    assert eventually?(fn -> not Service.status().active end)
-
-    set_gpio(%PlcRemote.Service.GPIOState{handle: self(), asserted?: true})
-    Service.recheck()
-    assert eventually?(&Service.active?/0)
+  test "keeps the service WLAN active for every IN1 state" do
+    for asserted? <- [false, true] do
+      set_gpio(%PlcRemote.Service.GPIOState{handle: self(), asserted?: asserted?})
+      Service.recheck()
+      assert eventually?(&Service.active?/0)
+    end
   end
 
   defp set_gpio(gpio) do

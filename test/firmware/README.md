@@ -26,7 +26,9 @@ The VM has two fixed virtio NICs:
 The test verifies firmware boot, supervision, the real NIF, DHCP Internet,
 stable Ethernet-role resolution, an isolated PLC TCP echo, QMP link changes,
 graceful shutdown, and `/data` persistence. QEMU runs `/bin/cat` as the tiny PLC
-echo endpoint, so no separate fixture program is needed.
+echo endpoint, so no separate fixture program is needed. Its x86 target has no
+Wi-Fi device; an integration-only service-AP adapter confirms the lifecycle
+request without replacing target Ethernet, VintageNet, routing, or NIF adapters.
 
 The reviewer-protected workflow also runs `mix test.invalid-key`, then
 `mix ci.tailnet`. Those tests verify fail-closed enrollment and live

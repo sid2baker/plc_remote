@@ -1,5 +1,5 @@
 defmodule PlcRemote.Service.FSM do
-  @moduledoc "Lifecycle for the service-switch controlled WPA2 access point."
+  @moduledoc "Lifecycle for the continuously requested WPA2 service access point."
 
   @fsm """
   [*] --> inactive : boot

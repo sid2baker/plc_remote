@@ -62,9 +62,9 @@ Network owns `NetworkConfigurationInvalid`, `InternetUnavailable`, and
 
 | Module | Responsibility |
 | --- | --- |
-| `PlcRemote.Service` | Public switch-controlled WLAN status/recheck API |
+| `PlcRemote.Service` | Public continuously enabled WLAN status/recheck API |
 | `PlcRemote.Service.FSM` | Inactive, active, and fault lifecycle |
-| `PlcRemote.Service.Runtime` | Direct debounced IN1 observation and portal lifecycle |
+| `PlcRemote.Service.Runtime` | Continuous AP policy, diagnostic IN1 observation, and portal lifecycle |
 | `PlcRemote.Service.State` | Grouped portal, GPIO, and routing resources |
 | `PlcRemote.Service.Actions` | WPA2 AP, web, and routing effects |
 | `PlcRemote.Service.Router` | Scoped `wlan0` → WAN forwarding boundary |
@@ -81,9 +81,10 @@ Network owns `NetworkConfigurationInvalid`, `InternetUnavailable`, and
 | `PlcRemote.Panel.Status` | Non-secret panel and isolated-I/O read model |
 | `PlcRemote.Adapters.GPIO` | Input subscription and output write contract |
 
-IN1 remains owned by `Service.Runtime`. Panel outputs initialize to physical off
-before observations are applied. IN2 can request only a bounded Tailscale
-reconnect; it cannot trigger reboot or mutate settings.
+IN1 remains observed by `Service.Runtime` but cannot disable the AP. Panel
+outputs initialize to physical off before observations are applied. IN2 can
+request only a bounded Tailscale reconnect; it cannot trigger reboot or mutate
+settings.
 
 ## Recovery and firmware
 
@@ -122,7 +123,7 @@ PlcRemote.Supervisor (:rest_for_one)
 3. Internet is Ethernet-only; `wlan0` is AP-only.
 4. Never give the PLC interface a gateway or DNS.
 5. Never bridge or route/NAT the PLC subnet; service NAT may target only the Internet role.
-6. Enable scoped IPv4 forwarding only while IN1 requests the service AP.
+6. Enable scoped IPv4 forwarding only while the continuously requested service AP is active.
 7. Never persist, publish, inspect, or render a Tailscale auth key.
 8. Open no PLC listener without an enabled, successfully resolved PLC role.
 9. Keep effect tasks/listeners and their lifecycle in one supervision lifetime.
@@ -130,7 +131,7 @@ PlcRemote.Supervisor (:rest_for_one)
 11. Automatically reboot only validated firmware within the persisted budget.
 12. Keep operational status separate from Health alarms.
 13. Treat OUT1/OUT2 as non-safety indication outputs and initialize them off.
-14. Let only confirmed-high IN1 disable service; keep IN2 limited to reconnect.
+14. Keep IN1 diagnostic-only and IN2 limited to reconnect.
 
 ## Validation
 

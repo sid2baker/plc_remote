@@ -1,5 +1,5 @@
 defmodule PlcRemote.Service.Status do
-  @moduledoc "Operational status for the service-switch controlled WLAN."
+  @moduledoc "Operational status for the continuously requested service WLAN."
 
   @type lifecycle :: :inactive | :active | :fault
 

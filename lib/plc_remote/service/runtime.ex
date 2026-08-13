@@ -1,5 +1,5 @@
 defmodule PlcRemote.Service.Runtime do
-  @moduledoc "Keeps the WPA2 service WLAN aligned directly with IPCBOX IN1."
+  @moduledoc "Keeps the WPA2 service WLAN continuously enabled and observes IPCBOX IN1."
 
   use GenServer
 
@@ -121,14 +121,9 @@ defmodule PlcRemote.Service.Runtime do
     if lifecycle() != :active, do: transition(:enable, current_payload())
   end
 
-  defp apply_desired(:inactive) do
-    if lifecycle() != :inactive, do: transition(:disable, nil)
-  end
-
-  # Fail open for local service: only a confirmed non-active GPIO level disables the AP.
-  defp desired_state(gpio) do
-    if GPIO.deasserted?(gpio), do: :inactive, else: :active
-  end
+  # Local service access is intentionally always requested. IN1 remains observable
+  # for diagnostics, but no physical input level may disable the AP.
+  defp desired_state(_gpio), do: :active
 
   defp current_status do
     payload = current_payload()

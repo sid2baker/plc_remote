@@ -75,6 +75,7 @@ if Mix.target() == :x86_64 do
     ipcbox_io: nil,
     panel_required: false,
     gpio_adapter: PlcRemote.Integration.GPIO,
+    service_ap_adapter: PlcRemote.Integration.ServiceAP,
     service_router_adapter: PlcRemote.Integration.ServiceRouter,
     recovery_auto_start: false
 end

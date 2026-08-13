@@ -1,5 +1,5 @@
 defmodule PlcRemote.Service.GPIO do
-  @moduledoc "Owns service-switch GPIO adaptation and primitive GPIO health."
+  @moduledoc "Owns diagnostic IN1 GPIO adaptation and primitive GPIO health."
 
   require Logger
 

@@ -1,5 +1,5 @@
 defmodule PlcRemote.Service do
-  @moduledoc "Public API for the service-switch controlled local WLAN."
+  @moduledoc "Public API for the continuously enabled local service WLAN."
 
   alias PlcRemote.Service.{Runtime, Status}
 
