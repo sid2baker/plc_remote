@@ -37,11 +37,11 @@ config :plc_remote,
   ipcbox_io: nil,
   panel_required: false,
   service_port: 4000,
-  auto_commissioning: false,
   uplink_cycle_delay_ms: 0,
   network_adapter: PlcRemote.Adapters.Host.Network,
   gpio_adapter: PlcRemote.Adapters.Host.GPIO,
   device_adapter: PlcRemote.Adapters.Host.Device,
+  service_router_adapter: PlcRemote.Adapters.Host.ServiceRouter,
   system_adapter: PlcRemote.Adapters.Host.System,
   tailscale_adapter: PlcRemote.Adapters.Host.Tailscale
 

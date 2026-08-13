@@ -84,15 +84,7 @@ defmodule PlcRemote.NetworkTest do
            }
   end
 
-  test "builds an open first-boot commissioning AP" do
-    service = %{address: "192.168.50.1", prefix_length: 24, psk: "commissioning-key"}
-    config = Network.service_access_point_config(service, "PLC-Remote-SETUP", "DE", :open)
-    [access_point] = config.vintage_net_wifi.networks
-
-    assert access_point == %{mode: :ap, ssid: "PLC-Remote-SETUP", key_mgmt: :none}
-  end
-
-  test "builds a WPA2 recovery AP with captive DNS and DHCP" do
+  test "builds a WPA2 service router AP with DHCP" do
     service = %{address: "192.168.50.1", prefix_length: 24, psk: "commissioning-key"}
     config = Network.service_access_point_config(service, "PLC-Remote-1234", "DE")
     [access_point] = config.vintage_net_wifi.networks
@@ -101,7 +93,7 @@ defmodule PlcRemote.NetworkTest do
     assert access_point.key_mgmt == :wpa_psk
     assert access_point.proto == "RSN"
     assert config.ipv4.address == "192.168.50.1"
-    assert config.dhcpd.options.dns == ["192.168.50.1"]
-    assert {"*", "192.168.50.1"} in config.dnsd.records
+    assert config.dhcpd.options.dns == [{1, 1, 1, 1}, {8, 8, 8, 8}]
+    refute Map.has_key?(config, :dnsd)
   end
 end

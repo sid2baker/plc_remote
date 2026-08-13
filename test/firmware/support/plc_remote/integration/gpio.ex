@@ -4,9 +4,11 @@ defmodule PlcRemote.Integration.GPIO do
   @behaviour PlcRemote.Adapters.GPIO
 
   @impl true
+  def open_input("emulated"), do: {:ok, %{value: 1}, make_ref()}
   def open_input(_gpio_spec), do: {:error, :emulated_gpio_unavailable}
 
   @impl true
+  def read(%{value: value}), do: value
   def read(_gpio), do: 1
 
   @impl true

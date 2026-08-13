@@ -6,32 +6,42 @@ defmodule PlcRemoteWeb.RouterTest do
   import Plug.Conn, only: [get_resp_header: 2]
   import ExUnit.CaptureLog
 
-  alias PlcRemote.{Configuration, Service, Settings}
+  alias PlcRemote.Configuration
   alias PlcRemoteWeb.Endpoint
 
   @endpoint Endpoint
 
-  test "renders an Ethernet-only commissioning wizard without stored secrets" do
+  test "renders one live device page without the commissioning wizard" do
     {:ok, view, html} = live(build_conn(), "/")
     service = Configuration.current().service
 
-    assert html =~ "Connect this gateway in three steps"
-    assert html =~ "Connect one Ethernet port"
-    assert has_element?(view, "input[name='settings[uplink_mode]'][value='ethernet']")
-    assert has_element?(view, "select[name='settings[ethernet_interface_hw_path]']")
-    refute html =~ "Wi-Fi network"
-    refute html =~ "wifi_ssid"
-    refute html =~ "wifi_psk"
-    refute html =~ "Rescan networks"
-    refute html =~ "settings[plc_address]"
-    refute html =~ "settings[plc_destination_port]"
+    assert html =~ "Gateway status and configuration"
+    assert html =~ "Detected network devices"
+    assert html =~ "Join the Tailscale network"
+    assert has_element?(view, "#detected-devices")
+    assert has_element?(view, "form[phx-submit=save-network]")
+    assert has_element?(view, "form[phx-submit=save-plc]")
+    assert has_element?(view, "form[phx-submit=enroll-tailscale]")
+    refute html =~ "STEP 1"
+    refute html =~ "Finish setup"
     refute html =~ service.psk
     refute html =~ service.web_secret
   end
 
-  test "uses DHCP by default and tests Ethernet before continuing" do
-    {:ok, view, _html} = live(build_conn(), "/")
-    assert has_element?(view, "details[data-visible-when='ethernet_method:static'][hidden]")
+  test "shows detected Ethernet controllers and saves DHCP Internet settings" do
+    {:ok, view, html} = live(build_conn(), "/")
+    assert html =~ "eth0"
+    assert html =~ "eth1"
+
+    assert has_element?(
+             view,
+             "select[name='settings[ethernet_interface_hw_path]'] option[selected][value='/devices/host/usb-2.5-gigabit']"
+           )
+
+    assert has_element?(
+             view,
+             "select[name='settings[machine_interface_hw_path]'] option[selected][value='/devices/host/native-gigabit']"
+           )
 
     html =
       view
@@ -44,78 +54,98 @@ defmodule PlcRemoteWeb.RouterTest do
       |> render_submit()
 
     assert Configuration.current().uplink.mode == :ethernet
-    assert html =~ "Internet connection works"
-    assert has_element?(view, "a", "Continue to Tailscale")
+    assert html =~ "Network settings saved"
   end
 
-  test "shows the Tailscale connection result directly on the auth-key step" do
+  test "missing and implausible Tailscale keys are rejected without enabling Tailscale" do
+    {:ok, view, _html} = live(build_conn(), "/")
+
+    html =
+      view
+      |> form("form[phx-submit=enroll-tailscale]", settings: %{"tailscale_auth_key" => ""})
+      |> render_submit()
+
+    assert html =~ "Enter a Tailscale auth key"
+    refute Configuration.current().tailscale.enabled
+
+    html =
+      view
+      |> form("form[phx-submit=enroll-tailscale]",
+        settings: %{"tailscale_auth_key" => "wrong"}
+      )
+      |> render_submit()
+
+    assert html =~ "auth key format is not valid"
+    refute Configuration.current().tailscale.enabled
+  end
+
+  test "failed candidate enrollment leaves settings unchanged and accepts another key" do
+    original = Configuration.current()
+
     assert {:ok, _settings} =
              Configuration.update(%{
                "uplink_mode" => "ethernet",
                "ethernet_interface_hw_path" => "/devices/host/usb-2.5-gigabit"
              })
 
-    {:ok, view, _html} = live(build_conn(), "/?step=tailscale")
+    {:ok, view, _html} = live(build_conn(), "/")
+
+    log =
+      capture_log(fn ->
+        view
+        |> form("form[phx-submit=enroll-tailscale]",
+          settings: %{"tailscale_auth_key" => "tskey-auth-rejected-valid"}
+        )
+        |> render_submit()
+      end)
+
+    refute log =~ "tskey-auth-rejected-valid"
+    assert eventually?(fn -> render(view) =~ "Tailscale rejected the key" end)
+    refute Configuration.current().tailscale.enabled
     assert has_element?(view, "input[name='settings[tailscale_auth_key]']")
-    refute has_element?(view, "input[name='settings[plc_destination_port]']")
-    refute has_element?(view, "input[name='settings[plc_address]']")
 
-    view
-    |> form("form[phx-submit=save-tailscale]",
-      settings: %{"tailscale_auth_key" => "tskey-auth-test-only"}
-    )
-    |> render_submit()
-
-    assert eventually?(fn -> render(view) =~ "Tailscale could not connect" end)
-    assert has_element?(view, "button", "Connect Tailscale")
+    Configuration.restore(original)
   end
 
-  test "failed final verification returns the live page while keeping the AP active" do
+  test "successful candidate enrollment is persisted only after validation" do
     original = Configuration.current()
-    Application.put_env(:plc_remote, :auto_commissioning, true)
-    Application.put_env(:plc_remote, :commissioning_verification_check_ms, 10)
-    Application.put_env(:plc_remote, :commissioning_verification_timeout_ms, 50)
+    Application.put_env(:plc_remote, :host_tailscale_enrollment_result, {:ok, {100, 64, 0, 9}})
 
     on_exit(fn ->
-      Application.put_env(:plc_remote, :auto_commissioning, false)
-      Application.delete_env(:plc_remote, :commissioning_verification_check_ms)
-      Application.delete_env(:plc_remote, :commissioning_verification_timeout_ms)
+      Application.delete_env(:plc_remote, :host_tailscale_enrollment_result)
       Configuration.restore(original)
     end)
 
-    assert {:ok, candidate} =
-             Settings.update(original, %{
+    assert {:ok, _settings} =
+             Configuration.update(%{
                "uplink_mode" => "ethernet",
-               "ethernet_interface_hw_path" => "/devices/host/usb-2.5-gigabit",
-               "tailscale_enabled" => "true"
+               "ethernet_interface_hw_path" => "/devices/host/usb-2.5-gigabit"
              })
 
-    assert :ok = Service.deactivate()
-    assert :ok = Configuration.restore(%{candidate | commissioned: false})
-    restart_service_boundary()
-    assert eventually?(fn -> Service.status().lifecycle == :automatic end)
+    {:ok, view, _html} = live(build_conn(), "/")
 
-    {:ok, view, _html} = live(build_conn(), "/?step=verify")
-    view |> element("button[phx-click='finish-commissioning']") |> render_click()
-    assert has_element?(view, "#commissioning-handoff")
+    view
+    |> form("form[phx-submit=enroll-tailscale]",
+      settings: %{"tailscale_auth_key" => "tskey-auth-accepted-valid"}
+    )
+    |> render_submit()
 
     assert eventually?(fn ->
-             has_element?(view, "#final-verification-failed") and
-               not has_element?(view, "#commissioning-handoff")
+             render(view) =~ "Tailscale joined successfully at 100.64.0.9"
            end)
 
-    assert Service.status().active
+    assert Configuration.current().tailscale.enabled
   end
 
-  test "filters one-time credentials from rendered output and LiveView logs" do
-    {:ok, view, _html} = live(build_conn(), "/?step=tailscale")
-    secret = "tskey-auth-never-log-this"
+  test "filters one-time credentials from rendered output and logs" do
+    {:ok, view, _html} = live(build_conn(), "/")
+    secret = "tskey-auth-never-log-this-valid"
 
     log =
       capture_log(fn ->
         html =
           view
-          |> form("form[phx-submit=save-tailscale]",
+          |> form("form[phx-submit=enroll-tailscale]",
             settings: %{"tailscale_auth_key" => secret}
           )
           |> render_submit()
@@ -128,15 +158,13 @@ defmodule PlcRemoteWeb.RouterTest do
 
   test "redirects captive portal probes to the stable setup hostname" do
     conn = get(build_conn(), "/generate_204")
-
     assert conn.status == 302
     assert get_resp_header(conn, "location") == ["http://plc.setup/"]
-    assert get_resp_header(conn, "cache-control") == ["no-store, max-age=0"]
   end
 
-  defp restart_service_boundary do
-    :ok = Supervisor.terminate_child(PlcRemote.Supervisor, PlcRemote.Service.Supervisor)
-    {:ok, _pid} = Supervisor.restart_child(PlcRemote.Supervisor, PlcRemote.Service.Supervisor)
+  setup do
+    original = Configuration.current()
+    on_exit(fn -> Configuration.restore(original) end)
     :ok
   end
 
@@ -147,20 +175,8 @@ defmodule PlcRemoteWeb.RouterTest do
     if predicate.() do
       true
     else
-      Process.sleep(20)
+      Process.sleep(10)
       eventually?(predicate, attempts - 1)
     end
-  end
-
-  setup do
-    Application.put_env(:plc_remote, :auto_commissioning, false)
-    restart_service_boundary()
-    assert :ok = Service.activate()
-
-    on_exit(fn ->
-      Application.put_env(:plc_remote, :auto_commissioning, false)
-      restart_service_boundary()
-      if Service.active?(), do: Service.deactivate()
-    end)
   end
 end

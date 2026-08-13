@@ -83,8 +83,8 @@ Initial ownership:
 | `FirmwareValidationFailed` | `Firmware.FSM` |
 | `RecoveryRebootBudgetExhausted` | `Recovery.FSM` |
 
-`RemoteAccessUnavailable` is derived from commissioning/configuration facts and
-primitive network/Tailscale conditions. No subsystem sets it directly.
+`RemoteAccessUnavailable` is derived from configuration facts and primitive
+network/Tailscale conditions. No subsystem sets it directly.
 
 ## Events and credentials
 
@@ -104,13 +104,15 @@ The v2 implementation preserves the product architecture:
 - Ethernet Internet and isolated PLC LAN are distinct hardware-path roles;
 - every Ethernet application is disable-first and unassigned ports stay off;
 - PLC configuration has no gateway or DNS;
-- Wi-Fi is setup/recovery AP only;
-- IPCBOX IN1 can only enable the service AP and IN2 can only request a bounded
-  reconnect;
+- Wi-Fi is a WPA2 service AP only;
+- only confirmed-high IPCBOX IN1 disables the service AP; IN2 can only request
+  a bounded reconnect;
 - IPCBOX outputs initialize off and remain non-safety indications;
-- remote PLC access is one fixed userspace TCP destination, never routing, NAT,
+- remote PLC access is one fixed userspace TCP destination, never subnet routing
   or bridging;
-- onsite configuration remains transactional;
+- service NAT is scoped to `wlan0` → Internet Ethernet and rejects every other
+  forwarded service path;
+- Tailscale enablement persists only after successful candidate enrollment;
 - recovery remains staged and reboot-budgeted;
 - tentative firmware rollback remains evidence-based and conservative;
 - host/target adapters and real x86 Nerves/QEMU validation remain mandatory.

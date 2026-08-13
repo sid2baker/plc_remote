@@ -14,24 +14,22 @@ defmodule PlcRemote.SettingsTest do
     assert settings.uplink.ethernet.interface_hw_path == ""
     assert settings.service.gpio_spec == "PIN16"
     assert settings.service.active_level == 0
-    assert settings.service.hold_ms == 3_000
-    assert settings.service.timeout_ms == 900_000
     assert settings.service.psk == "commissioning-key"
   end
 
   test "allows tailnet enrollment before PLC settings are configured" do
     settings = Settings.defaults(service_psk: "commissioning-key")
 
-    {enrollment, params} =
+    {{:ok, enrollment}, params} =
       Settings.pop_enrollment(%{
         "uplink_mode" => "ethernet",
         "ethernet_interface_hw_path" => "/devices/platform/internet",
         "tailscale_enabled" => "true",
-        "tailscale_auth_key" => "tskey-auth-once"
+        "tailscale_auth_key" => "tskey-auth-once-valid"
       })
 
     assert {:ok, updated} = Settings.update(settings, params)
-    assert PlcRemote.Tailscale.Enrollment.consume(enrollment) == "tskey-auth-once"
+    assert PlcRemote.Tailscale.Enrollment.consume(enrollment) == "tskey-auth-once-valid"
     refute Map.has_key?(params, "tailscale_auth_key")
     refute updated.machine.enabled
     assert updated.tailscale.enabled
@@ -57,20 +55,18 @@ defmodule PlcRemote.SettingsTest do
       "tailscale_enabled" => "true",
       "tailscale_hostname" => "plant-remote-1",
       "tailscale_tags" => "tag:plc-gateway, tag:plant-1",
-      "tailscale_auth_key" => "tskey-auth-once",
+      "tailscale_auth_key" => "tskey-auth-once-valid",
       "tailscale_listen_port" => "102",
       "plc_destination_port" => "102",
       "service_gpio_spec" => "PIN16",
       "service_active_level" => "0",
-      "service_hold_seconds" => "4",
-      "service_timeout_minutes" => "20",
       "service_ssid_prefix" => "PLC-Service",
       "service_psk" => "new-service-password"
     }
 
-    {enrollment, params} = Settings.pop_enrollment(params)
+    {{:ok, enrollment}, params} = Settings.pop_enrollment(params)
     assert {:ok, updated} = Settings.update(current, params)
-    assert PlcRemote.Tailscale.Enrollment.consume(enrollment) == "tskey-auth-once"
+    assert PlcRemote.Tailscale.Enrollment.consume(enrollment) == "tskey-auth-once-valid"
     assert updated.machine.plc_address == "10.20.30.10"
     assert updated.machine.interface_hw_path == "/devices/platform/native-gigabit"
     assert updated.uplink.mode == :ethernet
@@ -84,8 +80,6 @@ defmodule PlcRemote.SettingsTest do
     assert updated.tailscale.tags == ["tag:plc-gateway", "tag:plant-1"]
     assert updated.service.gpio_spec == "PIN16"
     assert updated.service.active_level == 0
-    assert updated.service.hold_ms == 4_000
-    assert updated.service.timeout_ms == 1_200_000
   end
 
   test "commissioned state cannot be forged through portal parameters" do
@@ -125,22 +119,22 @@ defmodule PlcRemote.SettingsTest do
   test "auth keys are never encoded into persistent settings" do
     settings = Settings.defaults(service_psk: "commissioning-key")
 
-    {enrollment, params} =
+    {{:ok, enrollment}, params} =
       Settings.pop_enrollment(%{
         "machine_enabled" => "true",
         "machine_interface_hw_path" => "/devices/platform/machine",
         "uplink_mode" => "ethernet",
         "ethernet_interface_hw_path" => "/devices/usb/uplink",
         "tailscale_enabled" => "true",
-        "tailscale_auth_key" => "tskey-auth-secret"
+        "tailscale_auth_key" => "tskey-auth-secret-valid"
       })
 
     assert {:ok, updated} = Settings.update(settings, params)
-    assert PlcRemote.Tailscale.Enrollment.consume(enrollment) == "tskey-auth-secret"
+    assert PlcRemote.Tailscale.Enrollment.consume(enrollment) == "tskey-auth-secret-valid"
     assert updated.tailscale.enabled
 
     assert {:ok, encoded} = Settings.encode(updated)
-    refute encoded =~ "tskey-auth-secret"
+    refute encoded =~ "tskey-auth-secret-valid"
   end
 
   test "round trips persistent settings" do

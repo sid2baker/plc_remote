@@ -10,9 +10,11 @@ PLC Remote has three physical network roles:
 
 1. **Internet Ethernet** — connects to the site router and Tailscale.
 2. **PLC Ethernet** — isolated static LAN connected only to the PLC.
-3. **Service Wi-Fi** — local setup/recovery AP only; never an Internet uplink.
+3. **Service Wi-Fi** — WPA2 local service AP controlled directly by IPCBOX IN1.
 
-It does not bridge, route, NAT, or advertise the PLC subnet.
+It never bridges or advertises the PLC subnet. While the service AP is active,
+it NATs only `wlan0` traffic to the configured Internet Ethernet interface;
+forwarding from `wlan0` to the PLC interface is explicitly rejected.
 
 ## Traffic model
 
@@ -29,10 +31,10 @@ Configured PLC IPv4:102
 
 Internet router <-- Ethernet [ PLC Remote ] Ethernet --> PLC
                               |
-                              +-- Wi-Fi setup/recovery AP only
+                              +-- WPA2 service AP -> Internet Ethernet only
 ```
 
-The remote path is one allowlisted stream:
+The remote PLC path is one allowlisted stream:
 
 ```text
 <gateway Tailscale IPv4>:102 -> <configured PLC IPv4>:102
@@ -42,23 +44,21 @@ The remote client receives no route to the PLC LAN. Broadcast traffic,
 PROFINET/DCP discovery, Layer 2 protocols, and unrelated PLC hosts or ports do
 not cross the proxy.
 
-## Commissioning
+## Configuration
 
-1. Connect one Ethernet port to an Internet router, normally with DHCP.
-2. Join the passwordless `PLC-Remote-<serial>` setup WLAN.
+1. Put the cabinet service switch in its active position so IN1 is low.
+2. Join the WPA2 `PLC-Remote-<serial>` WLAN.
 3. Open `http://plc.setup/` or `http://192.168.50.1/`.
-4. Select the detected Ethernet port connected to the router and save it.
-5. Paste a short-lived Tailscale auth key and wait for enrollment.
-6. Select **Finish setup**.
+4. Inspect the live list of detected Ethernet controllers and cable state.
+5. Select DHCP or enter a static Internet address if the plant requires it.
+6. Configure the separate PLC controller when a second controller is detected.
+7. Paste a one-use Tailscale auth key and select **Test key and connect**.
 
-Ethernet Internet and Tailscale are verified while the setup AP remains active.
-Only a successful final test closes the AP. A failed test leaves it available;
-a reboot before success starts it again.
-
-PLC addressing and assignment of the separate PLC Ethernet port are deliberately
-outside this Internet/Tailscale wizard. Provision them during manufacturing or
-from local IEx. Until provisioned, the gateway can join Tailscale but opens no
-PLC listener.
+The auth key is checked for a plausible format and used against a temporary
+candidate identity. Failed authentication leaves the saved configuration
+unchanged and the form ready for another key. Only a successful tailnet join
+promotes the identity and persists Tailscale as enabled. The auth key itself is
+never persisted.
 
 ## Network safety
 
@@ -71,12 +71,13 @@ Ethernet roles are persisted by stable `/devices/...` hardware paths, not by
 4. Enables only valid, distinct Internet and PLC roles.
 
 A missing, duplicate, or reordered interface therefore fails closed. The PLC
-LAN has a static local address but no gateway or DNS. Kernel IPv4/IPv6 forwarding,
-redirects, and source routing are disabled.
+LAN has a static local address but no gateway or DNS. IPv6 forwarding,
+redirects, and source routing stay disabled. IPv4 forwarding is enabled only
+while the service AP is active and is constrained by generated firewall rules.
 
 `wlan0` has one purpose: the service AP. PLC Remote never scans for Wi-Fi WAN,
 never joins a station network, and never transitions between AP and station
-modes during normal operation.
+modes.
 
 ## Tailscale and PLC proxy
 
@@ -100,16 +101,17 @@ plc = PlcRemote.Configuration.current().machine.plc_address
 :ok = S7.close(client)
 ```
 
-## Recovery
+## Service switch
 
-After commissioning, holding IPCBOX IN1 starts a WPA2, time-limited service AP.
-It only enables `wlan0` AP mode for configuration; it never enables Wi-Fi station
-mode or changes either Ethernet role. Defaults are:
+IPCBOX IN1 directly owns the service AP:
 
-- IN1 / GPIO23 (CM5 label `PIN16`), active-low after isolation
-- 3-second hold
-- 15-minute inactivity timeout
-- `192.168.50.0/24`
+- confirmed high: AP off;
+- low: AP on;
+- unavailable or unreadable: AP on, so local recovery remains possible.
+
+IN1 is GPIO23 (CM5 label `PIN16`) and active-low after isolation. Input changes
+are debounced for contact bounce; there is no hold timer or inactivity timeout.
+The service network is `192.168.50.0/24` and uses the per-device WPA2 key.
 
 The remaining carrier I/O has deliberately narrow appliance semantics:
 
@@ -127,11 +129,6 @@ open-drain outputs (150 V cutoff, 500 mA maximum, 18 Ω on-resistance); external
 loads still require engineering for inrush, suppression, fusing, and the
 installation's electrical rules.
 
-Onsite setting changes are transactional. A snapshot at
-`/data/plc_remote/settings.json.service-rollback` is restored after exit,
-timeout, failed verification, process failure, or power loss unless final
-verification commits it.
-
 A prolonged Tailscale outage escalates through reconnect, Ethernet role reapply,
 Internet Ethernet cycle, and a complete Tailscale supervisor restart before a
 bounded reboot is considered. The persistent reboot budget prevents loops.
@@ -143,16 +140,16 @@ PlcRemote.Configuration.service_credentials()
 PlcRemote.Diagnostics.snapshot()
 PlcRemote.Diagnostics.explain()
 PlcRemote.Health.active_alarms()
-PlcRemote.Service.activate()
+PlcRemote.Service.status()
 ```
 
 ## Firmware safety
 
-Tentative A/B firmware is validated using product-level evidence. An
-uncommissioned candidate must provide its setup AP. A commissioned candidate
-must retain stable Tailscale connectivity. Proven pre-update remote connectivity
-allows rollback when a candidate loses access; an ordinary ISP outage is not
-mistaken for firmware regression.
+Tentative A/B firmware is validated using product-level evidence. A new device
+must provide its service AP and report observed network hardware. A configured
+device must retain stable Tailscale connectivity. Proven pre-update remote
+connectivity allows rollback when a candidate loses access; an ordinary ISP
+outage is not mistaken for firmware regression.
 
 Production OTA still requires deployment signing keys and signature-enforcing
 transport.
@@ -181,7 +178,6 @@ OUT1/OUT2 electrical behavior on each production variant.
 ## Persistent state
 
 - Settings: `/data/plc_remote/settings.json`
-- Service rollback: `/data/plc_remote/settings.json.service-rollback`
 - Tailscale identity: `/data/plc_remote/tailscale/keys.json`
 - Recovery budget: `/data/plc_remote/recovery.json`
 - OTA expectation: `/data/plc_remote/update-expectation.json`
@@ -196,7 +192,7 @@ browser.
   `dc4665cf780ef8b9b753040faf86b02c28e24d44`
 - [`tailscale/tailscale-rs`](https://github.com/tailscale/tailscale-rs), tag
   `v0.4.0`, `ts_elixir` subproject
-- Phoenix LiveView and Bandit for the local wizard
+- Phoenix LiveView and Bandit for the live local configuration page
 - Finitomata for explicit Tailscale, Service, Recovery, and Firmware lifecycles
 - Alarmist for primitive and derived persistent health conditions
 - VintageNet and Circuits.GPIO for target networking and service recovery
@@ -222,7 +218,7 @@ Local portal preview:
 
 ```sh
 iex -S mix
-PlcRemote.Service.activate()
+# The host adapter treats unavailable IN1 as AP-on.
 # http://127.0.0.1:4000/
 ```
 

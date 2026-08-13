@@ -1,6 +1,6 @@
 defmodule PlcRemote.Settings do
   @moduledoc """
-  Validated, persistent configuration for networking, Tailscale, and service mode.
+  Validated, persistent configuration for networking, Tailscale, and local service access.
 
   Tailscale authentication keys are intentionally extracted separately from
   persistent settings and consumed only by the Tailscale enrollment command.
@@ -58,8 +58,6 @@ defmodule PlcRemote.Settings do
       service: %{
         gpio_spec: Keyword.get(opts, :gpio_spec, default_gpio_spec()),
         active_level: 0,
-        hold_ms: 3_000,
-        timeout_ms: 900_000,
         ssid_prefix: "PLC-Remote",
         psk: Keyword.get_lazy(opts, :service_psk, &generate_service_psk/0),
         web_secret: Keyword.get_lazy(opts, :web_secret, &generate_web_secret/0),
@@ -105,14 +103,11 @@ defmodule PlcRemote.Settings do
   end
 
   @doc "Removes and returns the one-use enrollment credential from form parameters."
-  @spec pop_enrollment(map()) :: {PlcRemote.Tailscale.Enrollment.t() | nil, map()}
+  @spec pop_enrollment(map()) ::
+          {{:ok, PlcRemote.Tailscale.Enrollment.t()} | {:error, atom()}, map()}
   def pop_enrollment(params) when is_map(params) do
     {auth_key, params} = Map.pop(params, "tailscale_auth_key")
-
-    case blank_to_nil(auth_key) do
-      nil -> {nil, params}
-      auth_key -> {PlcRemote.Tailscale.Enrollment.new(auth_key), params}
-    end
+    {PlcRemote.Tailscale.Enrollment.new(auth_key), params}
   end
 
   @doc "Returns whether two IPv4 CIDR networks overlap."
@@ -202,14 +197,6 @@ defmodule PlcRemote.Settings do
     %{
       gpio_spec: gpio_spec,
       active_level: active_level,
-      hold_ms:
-        params
-        |> integer_param("service_hold_seconds", div(current.hold_ms, 1_000))
-        |> Kernel.*(1_000),
-      timeout_ms:
-        params
-        |> integer_param("service_timeout_minutes", div(current.timeout_ms, 60_000))
-        |> Kernel.*(60_000),
       ssid_prefix: param(params, "service_ssid_prefix", current.ssid_prefix),
       psk: secret_param(params, "service_psk", current.psk),
       web_secret: param(params, "service_web_secret", current.web_secret),
@@ -351,8 +338,6 @@ defmodule PlcRemote.Settings do
     errors
     |> require_non_empty("service_gpio_spec", service.gpio_spec)
     |> require_enum("service_active_level", service.active_level, [0, 1])
-    |> require_range("service_hold_seconds", div(service.hold_ms, 1_000), 0..30)
-    |> require_range("service_timeout_minutes", div(service.timeout_ms, 60_000), 1..120)
     |> require_ssid_prefix(service.ssid_prefix)
     |> require_psk("service_psk", service.psk)
     |> require_web_secret(service.web_secret)
@@ -582,8 +567,6 @@ defmodule PlcRemote.Settings do
       "recovery_max_consecutive_reboots" => Map.get(recovery, "max_consecutive_reboots"),
       "service_gpio_spec" => Map.get(service, "gpio_spec"),
       "service_active_level" => Map.get(service, "active_level"),
-      "service_hold_seconds" => divide(Map.get(service, "hold_ms"), 1_000),
-      "service_timeout_minutes" => divide(Map.get(service, "timeout_ms"), 60_000),
       "service_ssid_prefix" => Map.get(service, "ssid_prefix"),
       "service_psk" => Map.get(service, "psk"),
       "service_web_secret" => Map.get(service, "web_secret")
@@ -687,7 +670,4 @@ defmodule PlcRemote.Settings do
 
     Enum.find(allowed, default, &(Atom.to_string(&1) == value))
   end
-
-  defp blank_to_nil(""), do: nil
-  defp blank_to_nil(value), do: value
 end

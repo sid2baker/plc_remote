@@ -3,7 +3,7 @@ defmodule PlcRemote.Recovery.Store do
   Persists only the recovery reboot budget.
 
   The file is deliberately independent from user settings so a failed recovery
-  write cannot corrupt commissioning or network configuration.
+  write cannot corrupt enrollment or network configuration.
   """
 
   @default %{consecutive_reboots: 0}

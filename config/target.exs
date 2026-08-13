@@ -61,21 +61,21 @@ config :plc_remote,
   ipcbox_io: ipcbox_io,
   panel_required: Mix.target() in [:rpi4, :rpi5],
   service_port: 80,
-  auto_commissioning: true,
   network_adapter: PlcRemote.Adapters.Target.Network,
   gpio_adapter: PlcRemote.Adapters.Target.GPIO,
   device_adapter: PlcRemote.Adapters.Target.Device,
+  service_router_adapter: PlcRemote.Adapters.Target.ServiceRouter,
   system_adapter: PlcRemote.Adapters.Target.System,
   tailscale_adapter: PlcRemote.Adapters.Target.Tailscale
 
 if Mix.target() == :x86_64 do
   config :plc_remote,
-    auto_commissioning: false,
     default_service_gpio: "emulated",
     fixed_service_gpio: false,
     ipcbox_io: nil,
     panel_required: false,
     gpio_adapter: PlcRemote.Integration.GPIO,
+    service_router_adapter: PlcRemote.Integration.ServiceRouter,
     recovery_auto_start: false
 end
 

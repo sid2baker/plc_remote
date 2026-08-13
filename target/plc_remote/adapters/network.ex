@@ -51,7 +51,8 @@ defmodule PlcRemote.Adapters.Target.Network do
         speed_mbps: speed_mbps(ifname),
         lower_up: VintageNet.get(["interface", ifname, "lower_up"]),
         connection: VintageNet.get(["interface", ifname, "connection"]),
-        mac_address: VintageNet.get(["interface", ifname, "mac_address"])
+        mac_address: VintageNet.get(["interface", ifname, "mac_address"]),
+        addresses: addresses(ifname)
       }
     end)
     |> Enum.reject(&(&1.hw_path == "/devices/virtual"))
@@ -98,6 +99,15 @@ defmodule PlcRemote.Adapters.Target.Network do
   defp interface_kind("eth" <> _suffix), do: :ethernet
   defp interface_kind("wlan" <> _suffix), do: :wifi
   defp interface_kind(_ifname), do: :other
+
+  defp addresses(ifname) do
+    ["interface", ifname, "addresses"]
+    |> VintageNet.get()
+    |> List.wrap()
+    |> Enum.map(fn address ->
+      "#{:inet.ntoa(address.address)}/#{address.prefix_length}"
+    end)
+  end
 
   defp driver(ifname) do
     case File.read_link("/sys/class/net/#{ifname}/device/driver") do

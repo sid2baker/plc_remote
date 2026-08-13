@@ -3,12 +3,18 @@ defmodule PlcRemote.Tailscale.EnrollmentTest do
 
   alias PlcRemote.Tailscale.Enrollment
 
-  test "redacts transient credentials from inspection" do
+  test "validates and redacts transient credentials" do
     secret = "tskey-auth-must-not-appear"
-    enrollment = Enrollment.new(secret)
+    assert {:ok, enrollment} = Enrollment.new(secret)
 
     refute inspect(enrollment) =~ secret
     assert inspect(enrollment) =~ "[FILTERED]"
     assert Enrollment.consume(enrollment) == secret
+  end
+
+  test "rejects missing and implausible keys" do
+    assert {:error, :missing_auth_key} = Enrollment.new("")
+    assert {:error, :missing_auth_key} = Enrollment.new(nil)
+    assert {:error, :invalid_auth_key} = Enrollment.new("not-a-tailnet-key")
   end
 end

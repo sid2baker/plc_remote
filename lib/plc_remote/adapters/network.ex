@@ -9,7 +9,8 @@ defmodule PlcRemote.Adapters.Network do
           optional(:speed_mbps) => pos_integer() | nil,
           optional(:lower_up) => boolean() | nil,
           optional(:connection) => :disconnected | :lan | :internet | nil,
-          optional(:mac_address) => String.t() | nil
+          optional(:mac_address) => String.t() | nil,
+          optional(:addresses) => [String.t()]
         }
 
   @callback configure(PlcRemote.Network.ifname(), map(), keyword()) :: :ok | {:error, term()}

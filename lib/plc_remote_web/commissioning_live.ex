@@ -1,99 +1,93 @@
 defmodule PlcRemoteWeb.CommissioningLive do
   use PlcRemoteWeb, :live_view
 
-  alias PlcRemote.{Configuration, Firmware, Health, Network, Recovery, Service, Tailscale}
+  alias PlcRemote.{Configuration, Network, Service, Settings, Tailscale}
 
   @refresh_interval_ms 1_000
-  @steps ~w(network tailscale verify advanced)
 
   @impl Phoenix.LiveView
   def mount(_params, _session, socket) do
     socket =
       socket
-      |> assign(:settings, Configuration.current())
       |> assign(:draft, %{})
       |> assign(:errors, %{})
       |> assign(:notice, nil)
-      |> assign(:handoff, nil)
-      |> assign(:network_saved, false)
+      |> assign(:enrolling, false)
+      |> assign(:enrollment_task, nil)
       |> refresh_status()
 
-    if connected?(socket) do
-      Service.touch()
-      send(self(), :refresh)
-    end
-
+    if connected?(socket), do: send(self(), :refresh)
     {:ok, socket}
-  end
-
-  @impl Phoenix.LiveView
-  def handle_params(params, _uri, socket) do
-    step = normalize_step(Map.get(params, "step"), socket.assigns.settings.commissioned)
-    {:noreply, assign(socket, :step, step)}
   end
 
   @impl Phoenix.LiveView
   def handle_event("save-network", %{"settings" => params}, socket) do
     params = Map.put(params, "uplink_mode", "ethernet")
-
-    save_step(socket, params, "Ethernet settings applied. Testing Internet…", nil,
-      network_saved: true
-    )
+    save_settings(socket, params, "Network settings saved.")
   end
 
-  def handle_event("save-tailscale", %{"settings" => params}, socket) do
-    save_step(socket, params, "Tailscale settings applied. Connecting…", nil, [])
+  def handle_event("save-plc", %{"settings" => params}, socket) do
+    save_settings(socket, params, "PLC network settings saved.")
   end
 
-  def handle_event("save-advanced", %{"settings" => params}, socket) do
-    save_step(socket, params, "Service and recovery settings saved.", "advanced", [])
-  end
+  def handle_event("enroll-tailscale", _params, %{assigns: %{enrolling: true}} = socket),
+    do: {:noreply, socket}
 
-  def handle_event("finish-commissioning", _params, socket) do
-    case Service.finish_commissioning() do
-      {:ok, :verifying} ->
-        {:noreply, assign(socket, handoff: :verification, notice: nil)}
+  def handle_event("enroll-tailscale", %{"settings" => params}, socket) do
+    {enrollment_result, public_params} = Settings.pop_enrollment(params)
+    public_params = Map.put(public_params, "tailscale_enabled", "true")
 
-      {:error, reason} ->
-        {:noreply, assign(socket, :errors, %{"finish" => finish_error(reason)})}
+    with {:ok, enrollment} <- enrollment_result,
+         {:ok, candidate_settings} <- Settings.update(Configuration.current(), public_params) do
+      owner = self()
+
+      {:ok, task} =
+        Task.Supervisor.start_child(PlcRemote.Tailscale.ConnectionSupervisor, fn ->
+          result = enroll_candidate(enrollment, candidate_settings, public_params)
+          send(owner, {:enrollment_result, self(), result})
+        end)
+
+      {:noreply,
+       socket
+       |> assign(:enrolling, true)
+       |> assign(:enrollment_task, task)
+       |> assign(:draft, public_draft(public_params))
+       |> assign(:errors, %{})
+       |> assign(:notice, nil)}
+    else
+      {:error, reason} -> handle_enrollment_error(socket, public_params, reason)
     end
   end
 
-  def handle_event("exit-service", _params, socket) do
-    Task.start(fn ->
-      Process.sleep(750)
-      Service.deactivate()
-    end)
-
-    {:noreply, assign(socket, :handoff, :exit)}
+  def handle_event("disable-tailscale", _params, socket) do
+    save_settings(socket, %{"tailscale_enabled" => "false"}, "Tailscale disabled.")
   end
 
   @impl Phoenix.LiveView
-  def handle_info(:refresh, socket) do
-    socket = refresh_status(socket)
-    Process.send_after(self(), :refresh, @refresh_interval_ms)
-    {:noreply, socket}
+  def handle_info(
+        {:enrollment_result, task, result},
+        %{assigns: %{enrollment_task: task}} = socket
+      ) do
+    {:noreply, finish_enrollment(socket, result)}
   end
 
-  defp save_step(socket, params, notice, next_step, extra_assigns) do
-    Service.touch()
-    {enrollment, params} = PlcRemote.Settings.pop_enrollment(params)
+  def handle_info({:enrollment_result, _task, _result}, socket), do: {:noreply, socket}
 
+  def handle_info(:refresh, socket) do
+    Process.send_after(self(), :refresh, @refresh_interval_ms)
+    {:noreply, refresh_status(socket)}
+  end
+
+  defp save_settings(socket, params, notice) do
     case Configuration.update(params) do
       {:ok, settings} ->
-        if enrollment, do: Tailscale.enroll(enrollment)
-
-        socket =
-          socket
-          |> assign(:settings, settings)
-          |> assign(:draft, %{})
-          |> assign(:errors, %{})
-          |> assign(:notice, notice)
-          |> assign(extra_assigns)
-          |> refresh_status()
-          |> maybe_push_step(next_step)
-
-        {:noreply, socket}
+        {:noreply,
+         socket
+         |> assign(:settings, settings)
+         |> assign(:draft, %{})
+         |> assign(:errors, %{})
+         |> assign(:notice, notice)
+         |> refresh_status()}
 
       {:error, errors} when is_map(errors) ->
         {:noreply, assign(socket, errors: errors, draft: public_draft(params), notice: nil)}
@@ -101,67 +95,166 @@ defmodule PlcRemoteWeb.CommissioningLive do
       {:error, reason} ->
         {:noreply,
          assign(socket,
-           errors: %{"settings" => "Settings could not be persisted: #{inspect(reason)}"},
+           errors: %{"settings" => "Settings could not be saved: #{public_error(reason)}"},
            draft: public_draft(params),
            notice: nil
          )}
     end
   end
 
-  defp maybe_push_step(socket, nil), do: socket
-  defp maybe_push_step(socket, step), do: push_patch(socket, to: "/?step=#{step}")
-  defp public_draft(params), do: Map.drop(params, ["tailscale_auth_key", "service_psk"])
-
-  defp refresh_status(socket) do
-    service = Service.status()
-
-    socket =
-      assign(socket,
-        settings: Configuration.current(),
-        firmware: Firmware.status(),
-        health: Health.snapshot(),
-        network: Network.status(),
-        recovery: Recovery.status(),
-        service: service,
-        tailscale: Tailscale.status()
-      )
-
-    if socket.assigns.handoff == :verification and service.verification.state == :failed do
-      assign(socket, :handoff, nil)
-    else
-      socket
+  defp enroll_candidate(enrollment, candidate_settings, public_params) do
+    with {:ok, candidate_identity, ipv4} <- Tailscale.enroll(enrollment, candidate_settings),
+         {:ok, settings} <- persist_enrollment(public_params, candidate_identity) do
+      {:ok, settings, ipv4}
     end
   end
 
-  defp normalize_step(step, true) when step in @steps, do: step
-  defp normalize_step(step, false) when step in ~w(network tailscale verify), do: step
-  defp normalize_step(_step, _commissioned), do: "network"
-
-  defp ready_to_test?(settings) do
-    settings.uplink.mode == :ethernet and settings.tailscale.enabled
+  defp finish_enrollment(socket, {:ok, settings, ipv4}) do
+    socket
+    |> assign(:enrolling, false)
+    |> assign(:enrollment_task, nil)
+    |> assign(:settings, settings)
+    |> assign(:draft, %{})
+    |> assign(:errors, %{})
+    |> assign(:notice, "Tailscale joined successfully at #{ipv4}.")
+    |> refresh_status()
   end
 
-  defp network_ready_to_continue?(_settings, network), do: network.connection == :internet
-
-  defp tailscale_ready_to_continue?(_settings, _network, tailscale) do
-    tailscale.lifecycle == :connected
+  defp finish_enrollment(socket, {:error, reason}) do
+    socket = assign(socket, enrolling: false, enrollment_task: nil)
+    {:noreply, socket} = handle_enrollment_error(socket, socket.assigns.draft, reason)
+    socket
   end
 
-  defp check_state(true), do: :ok
-  defp check_state(false), do: :pending
+  defp handle_enrollment_error(socket, _public_params, :missing_auth_key),
+    do: enrollment_error(socket, "Enter a Tailscale auth key.")
 
-  defp tailscale_check_state(%{lifecycle: :connected}), do: :ok
-  defp tailscale_check_state(%{lifecycle: :retry_wait}), do: :error
-  defp tailscale_check_state(_tailscale), do: :pending
+  defp handle_enrollment_error(socket, _public_params, :invalid_auth_key),
+    do: enrollment_error(socket, "The auth key format is not valid. Paste a tskey-auth-… key.")
 
-  defp finish_error(:automatic_commissioning_not_active),
-    do: "Final commissioning is available only from the first-boot setup AP."
+  defp handle_enrollment_error(socket, _public_params, :internet_unavailable),
+    do: enrollment_error(socket, "Internet is not available yet. Check the detected WAN port.")
 
-  defp finish_error(reason), do: inspect(reason)
+  defp handle_enrollment_error(socket, _public_params, :connection_timeout),
+    do: enrollment_error(socket, "Tailscale did not respond before the connection timed out.")
 
-  defp error_reason(nil), do: nil
-  defp error_reason(%PlcRemote.Error{reason: reason}), do: inspect(reason)
-  defp error_reason(reason), do: inspect(reason)
+  defp handle_enrollment_error(socket, _public_params, :authentication_failed) do
+    enrollment_error(
+      socket,
+      "Tailscale rejected the key. Generate a new one-use auth key and retry."
+    )
+  end
+
+  defp handle_enrollment_error(socket, public_params, errors) when is_map(errors) do
+    {:noreply, assign(socket, errors: errors, draft: public_draft(public_params), notice: nil)}
+  end
+
+  defp handle_enrollment_error(socket, _public_params, reason),
+    do: enrollment_error(socket, "Enrollment failed: #{public_error(reason)}")
+
+  defp persist_enrollment(public_params, candidate_identity) do
+    previous_settings = Configuration.current()
+
+    case Tailscale.commit_enrollment(candidate_identity) do
+      {:ok, rollback} ->
+        persist_committed_enrollment(public_params, previous_settings, rollback)
+
+      {:error, _reason} = error ->
+        _result = Tailscale.discard_enrollment(candidate_identity)
+        error
+    end
+  end
+
+  defp persist_committed_enrollment(public_params, previous_settings, rollback) do
+    case Configuration.complete_enrollment(public_params) do
+      {:ok, settings} ->
+        _result = Tailscale.finalize_enrollment(rollback)
+        {:ok, settings}
+
+      {:error, _reason} = error ->
+        _result = Tailscale.rollback_enrollment(rollback)
+        _result = Configuration.restore(previous_settings)
+        error
+    end
+  end
+
+  defp enrollment_error(socket, message) do
+    {:noreply, assign(socket, errors: %{"tailscale_auth_key" => message}, notice: nil)}
+  end
+
+  defp refresh_status(socket) do
+    network = Network.status()
+
+    assign(socket,
+      settings: Configuration.current(),
+      network: network,
+      service: Service.status(),
+      tailscale: Tailscale.status(),
+      ethernet: ethernet_interfaces(network.interfaces),
+      suggestion: network_suggestion(network)
+    )
+  end
+
+  defp network_suggestion(network) do
+    network.interfaces
+    |> ethernet_interfaces()
+    |> describe_ethernet()
+  end
+
+  defp describe_ethernet([]), do: {:error, "No Ethernet controller was detected."}
+
+  defp describe_ethernet([_interface]) do
+    {:warning,
+     "One Ethernet controller was detected. Internet can work, but an isolated PLC connection requires a second controller."}
+  end
+
+  defp describe_ethernet(ethernet) do
+    linked = Enum.count(ethernet, & &1.lower_up)
+    {:ok, "#{length(ethernet)} Ethernet controllers detected; #{linked} currently have link."}
+  end
+
+  defp suggested_uplink(_ethernet, configured) when configured not in [nil, ""], do: configured
+
+  defp suggested_uplink([interface], _configured), do: interface.hw_path
+
+  defp suggested_uplink(ethernet, _configured) do
+    ethernet
+    |> Enum.filter(&(&1.lower_up and &1.connection == :internet))
+    |> unique_interface_path()
+  end
+
+  defp suggested_machine(_ethernet, _uplink, configured) when configured not in [nil, ""],
+    do: configured
+
+  defp suggested_machine(ethernet, uplink, _configured) when uplink not in [nil, ""] do
+    ethernet
+    |> Enum.reject(&(&1.hw_path == uplink))
+    |> unique_interface_path()
+  end
+
+  defp suggested_machine(_ethernet, _uplink, _configured), do: ""
+
+  defp unique_interface_path([interface]), do: interface.hw_path
+  defp unique_interface_path(_interfaces), do: ""
+
+  defp interface_label(interface) do
+    driver = interface.driver || "unknown driver"
+    link = if interface.lower_up, do: "connected", else: "no cable"
+    address = interface_addresses(interface)
+    "#{interface.ifname} · #{driver} · #{link}#{address}"
+  end
+
+  defp interface_addresses(%{addresses: addresses}) when is_list(addresses) and addresses != [] do
+    " · " <> Enum.join(addresses, ", ")
+  end
+
+  defp interface_addresses(_interface), do: ""
+  defp ethernet_interfaces(interfaces), do: Enum.filter(interfaces, &(&1.kind == :ethernet))
+  defp public_draft(params), do: Map.drop(params, ["tailscale_auth_key", "service_psk"])
+  defp public_error(%PlcRemote.Error{reason: reason}), do: public_error(reason)
+  defp public_error(reason) when is_atom(reason), do: Phoenix.Naming.humanize(reason)
+  defp public_error(_reason), do: "unexpected error"
+  defp selected?(left, right), do: to_string(left) == to_string(right)
 
   defp value(draft, field, fallback), do: Map.get(draft, field, fallback)
 
@@ -171,61 +264,4 @@ defmodule PlcRemoteWeb.CommissioningLive do
       :error -> fallback
     end
   end
-
-  defp selected?(value, option), do: to_string(value) == to_string(option)
-  defp ethernet_interfaces(interfaces), do: Enum.filter(interfaces, &(&1.kind == :ethernet))
-
-  defp effective_port_path(draft, field, configured, interfaces, role) do
-    case Map.fetch(draft, field) do
-      {:ok, path} -> path
-      :error when configured not in [nil, ""] -> configured
-      :error -> suggested_port_path(interfaces, role)
-    end
-  end
-
-  defp suggested_port_path(interfaces, :uplink) do
-    ethernet = ethernet_interfaces(interfaces)
-
-    interface =
-      Enum.find(ethernet, &(&1.lower_up and usb_ethernet?(&1))) ||
-        Enum.find(ethernet, & &1.lower_up) ||
-        Enum.find(ethernet, &usb_ethernet?/1) ||
-        List.first(ethernet)
-
-    interface_path(interface)
-  end
-
-  defp usb_ethernet?(interface) do
-    interface.driver in ["r8152", "ax88179_178a"] or String.contains?(interface.hw_path, "/usb")
-  end
-
-  defp interface_path(nil), do: ""
-  defp interface_path(interface), do: interface.hw_path
-
-  defp interface_options(interfaces, current_path) do
-    options =
-      interfaces
-      |> ethernet_interfaces()
-      |> Enum.map(&%{path: &1.hw_path, label: interface_label(&1)})
-
-    if current_path in [nil, ""] or Enum.any?(options, &(&1.path == current_path)) do
-      options
-    else
-      [%{path: current_path, label: "Configured port (not currently detected)"} | options]
-    end
-  end
-
-  defp interface_label(interface) do
-    driver = interface.driver || "unknown driver"
-    speed = if interface.speed_mbps, do: "#{interface.speed_mbps} Mb/s", else: "speed unknown"
-    link = if interface.lower_up, do: "link up", else: "link down"
-    "#{interface.ifname} · #{driver} · #{speed} · #{link}"
-  end
-
-  defp remaining_label(%{lifecycle: lifecycle})
-       when lifecycle in [:automatic, :verifying_automatic],
-       do: "No timeout during setup"
-
-  defp remaining_label(%{expires_in_seconds: nil}), do: "Not active"
-  defp remaining_label(service), do: "#{service.expires_in_seconds} seconds"
 end

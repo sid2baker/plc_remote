@@ -1,195 +1,107 @@
 # PLC Remote architecture
 
-## Product boundary
+PLC Remote exposes one configured PLC TCP endpoint over embedded `tailscale-rs`.
+It does not bridge or advertise the PLC subnet.
 
-PLC Remote is a purpose-built userspace TCP gateway, not a router.
+## Physical networks
 
-| Zone | Interface | Default | Purpose |
-| --- | --- | --- | --- |
-| PLC LAN | Selected Ethernet hardware path | Disabled | Static isolated PLC network |
-| Internet | Different selected Ethernet path | Disabled | Site router and Tailscale |
-| Service | `wlan0` AP | First boot only | Setup; WPA2 GPIO recovery later |
-| Local recovery | `usb0` | On | Nerves IEx and firmware access |
+| Role | Interface | Addressing | Purpose |
+|---|---|---|---|
+| Internet | detected Ethernet path | DHCP or static | Internet and Tailscale |
+| PLC | separate detected Ethernet path | static, no gateway/DNS | One fixed userspace PLC proxy |
+| Service | `wlan0` | `192.168.50.1/24` | WPA2 local status/configuration |
+| Recovery | `usb0` | Nerves default | Local IEx and firmware access |
 
-Wi-Fi is never an Internet uplink. There is no station configuration, network
-scan, AP/station transition, fallback route, bridge, NAT, subnet route, or
-kernel forwarding.
+Ethernet roles are persisted by `/devices/...` hardware path. All detected
+Ethernet interfaces are disabled before valid, distinct roles are enabled.
+A missing or duplicate role fails closed.
 
-## Remote data path
+The IPCBOX second Ethernet controller is USB-attached. CM4 therefore explicitly
+enables its USB2 controller in host mode and includes RTL815x, AX88179, CDC
+Ethernet/NCM and R8169 fallback drivers. If only one controller enumerates, the
+UI reports that Internet can work but isolated PLC access needs a second
+controller; it never invents or assumes `eth1`.
+
+## Service switch and routing
+
+IPCBOX IN1 is active-low and directly controls the AP after a short debounce:
 
 ```text
-Authorized tailnet client
-  -> gateway tailnet IPv4 + fixed TCP listen port
-  -> tailscale-rs userspace listener
-  -> PlcRemote.Proxy.TcpProxy
-  -> one configured PLC IPv4 + fixed destination port
+confirmed high -> AP off
+low            -> AP on
+unreadable     -> AP on
 ```
 
-Commissioning may enroll Tailscale before PLC provisioning. While
-`machine.enabled` is false, `tailscale-rs` joins but creates no TCP listener.
-When provisioned, the remote peer cannot choose another PLC address or port.
-Broadcast discovery and Layer 2 protocols do not cross this path.
+Only a confirmed high may remove onsite service access. The AP always uses the
+per-device WPA2 key. There is no first-boot open AP, hold timer, inactivity
+timeout, final handoff, or browser-owned lifecycle.
 
-The pinned `sid2baker/s7` package is independent of the proxy and remains
-available from local IEx.
+While active, the AP provides DHCP and public DNS servers. Scoped iptables rules
+allow only:
 
-## Ethernet ownership
+```text
+wlan0 -> configured Internet Ethernet -> MASQUERADE
+Internet Ethernet -> wlan0             -> RELATED,ESTABLISHED only
+wlan0 -> every other forwarding path   -> REJECT
+```
 
-`PlcRemote.Configuration` persists stable `/devices/...` paths. VintageNet's
-ifname-keyed persistence is disabled. `PlcRemote.Network.Runtime` owns Ethernet
-configuration and always:
+The rules and IPv4 forwarding are removed when IN1 goes high. IPv6 forwarding
+remains disabled. No service traffic can route to the PLC Ethernet role.
 
-1. Detects physical Ethernet interfaces.
-2. Disables every detected Ethernet interface.
-3. Resolves the configured Internet and PLC hardware paths.
-4. Rejects missing or duplicate active roles.
-5. Applies only the valid role configurations.
+## Configuration UI
 
-The PLC role has a static address and prefix without gateway or DNS. The
-Internet role uses DHCP or explicit static address, gateway, and DNS. Boot
-sysctls disable IPv4/IPv6 forwarding, redirects, and source routing.
+One LiveView page refreshes the operational read models and shows every detected
+network controller, driver, MAC, stable path, link state and current addresses.
+It presents DHCP first and static fields for networks that require them. PLC
+settings remain disabled until two Ethernet controllers are visible.
 
-## Service AP and commissioning
+Tailscale enrollment is transactional:
 
-An uncommissioned target starts an open, non-persistent AP on `wlan0` at
-`192.168.50.1/24`. It serves DHCP, wildcard captive DNS for `plc.setup`, and a
-temporary Bandit listener. No Wi-Fi scan or station process is involved.
+1. reject missing or implausible `tskey-auth-...` input locally;
+2. build validated candidate settings without persisting them;
+3. connect using a temporary candidate identity file;
+4. require an IPv4 address and stable node identity;
+5. atomically promote the identity and persist enabled settings only on success;
+6. remove candidate state and return a secret-free error on failure.
 
-The LiveView wizard has three steps:
+The auth key is never stored, published, inspected, rendered, or logged.
 
-1. Select and test the Ethernet Internet port.
-2. Enroll the gateway in Tailscale.
-3. Verify Ethernet Internet and Tailscale, then close the setup AP.
+## Runtime flow
 
-Final verification runs while the AP remains active. Success atomically marks
-the unit commissioned and then closes Bandit and the AP. Failure leaves the AP
-active. A reboot before success starts first-boot setup again.
+```text
+observation -> Alarmist health -> policy/FSM event -> Finitomata transition
+            -> action -> target adapter
+```
 
-After commissioning, a physical GPIO hold starts a WPA2-protected AP with a
-bounded inactivity timeout. Onsite setting updates are transactional. The prior
-settings snapshot is restored on explicit exit, timeout, failed verification,
-portal crash, service process restart, or power loss unless final verification
-commits it.
-
-Phoenix uses CSRF protection, per-device signing material, strict security
-headers, no-store responses, no external assets, and no service worker. The
-first AP and HTTP portal are intentionally unencrypted, so first commissioning
-requires a physically controlled area and a short-lived Tailscale auth key.
-
-## tailscale-rs boundary
-
-The project intentionally pins experimental `tailscale-rs` v0.4.0. The required
-`TS_RS_EXPERIMENT=this_is_unstable_software` acknowledgement is installed in
-`vm.args` before native code loads. Identity state is owner-only under
-`/data/plc_remote/tailscale`.
-
-`PlcRemote.Tailscale.FSM` owns connection lifecycle. `Tailscale.Runtime`
-translates typed Network/configuration facts, task results, and timers into FSM
-events; `Tailscale.Actions` owns native connection and fixed listener effects. A
-one-for-all supervisor tears down runtime, FSM, connection tasks, and proxy
-sessions together.
-A reproducible dependency patch replaces a reproduced late-netmon `.unwrap()`
-panic during runtime shutdown with a non-fatal debug event.
-
-## Recovery and OTA
-
-A commissioned Tailscale outage escalates through:
-
-1. Tailscale reconnect.
-2. Disable-first Ethernet role reapply.
-3. Internet Ethernet cycle.
-4. Complete Tailscale boundary restart.
-5. Persisted, budget-limited device reboot.
-
-Reboots are suppressed during setup/service mode and for unvalidated candidate
-firmware. The budget resets only after stable Tailscale operation.
-
-`PlcRemote.Firmware` validates uncommissioned candidates after the
-setup AP is healthy and commissioned candidates after stable tailnet access.
-Pre-update connectivity evidence permits rollback when a candidate loses remote
-access; an ordinary external outage is not automatically blamed on firmware.
+Lifecycle belongs to Finitomata FSMs. Alarmist represents persistent health,
+not commands. Typed statuses are operational read models.
 
 ## Supervision
 
 ```text
 PlcRemote.Supervisor (:rest_for_one)
 ├── Configuration
-├── Phoenix.PubSub / typed Events
-├── Health.Reporter / Alarmist read model
+├── Phoenix.PubSub / Events
+├── Health.Reporter
 ├── Panel.Runtime
 ├── Network.Runtime
-├── Tailscale.Supervisor (:one_for_all)
-│   ├── connection Task.Supervisor
-│   ├── session Task.Supervisor
-│   └── Tailscale.Runtime + linked FSM
-├── Service.Supervisor (:one_for_all)
-│   ├── Phoenix runtime (listener disabled)
-│   ├── temporary Bandit supervisor
-│   └── Service.Runtime + linked FSM
-├── Recovery.Runtime + linked FSM
-└── Firmware.Runtime + linked FSM
+├── Tailscale.Supervisor
+├── Service.Supervisor
+├── Recovery.Runtime
+└── Firmware.Runtime
 ```
 
-Configuration loss restarts every consumer; network loss restarts remote and
-service boundaries. Domain effects and their FSM lifecycles therefore cannot
-remain orphaned after runtime failure. `PlcRemote.Health` answers current
-conditions; typed subsystem statuses answer current activity.
+The service supervisor owns the web runtime, temporary Bandit listener, IN1
+resource and Service FSM. Restarting it re-reads IN1 and restores the requested
+state.
 
-## Hardware validation
+## Security invariants
 
-Custom CM4 and CM5 systems enable the carrier's native Ethernet plus Realtek
-RTL815x, ASIX AX88179, and Realtek PCIe fallback drivers for the second port.
-Both interfaces start disabled and roles resolve only from stable hardware
-paths, never `eth0`/`eth1` ordering.
-
-Waveshare documents IN1/IN2 as isolated active-low GPIO23/GPIO24, OUT1/OUT2 as
-open-drain channels controlled by GPIO27/GPIO22, and USER1/USER2 as active-low
-GPIO25/GPIO26 LEDs. PLC Remote uses IN1 only for the service AP, IN2 for a
-rate-limited reconnect request, OUT1 for complete remote PLC path readiness,
-OUT2 for active service access, USER1 for remote-access failure, and USER2 for
-service failure. PWR/ACT remain system-owned; STAT/NET remain 4G/5G-owned.
-
-Production qualification must verify:
-
-- both physical Ethernet hardware paths and loaded driver identity;
-- path stability and fail-closed role ownership across repeated boots;
-- all GPIO and external I/O polarities on CM4 and CM5;
-- OUT1/OUT2 load engineering and off-at-boot behavior;
-- fixed proxy behavior against a real PLC;
-- signed A/B OTA transport and rollback.
-
-## x86_64 QEMU integration boundary
-
-`MIX_TARGET=x86_64` packages the same target networking, settings, supervision,
-and `tailscale-rs` adapters into `nerves_system_x86_64`. Only GPIO and automatic
-Wi-Fi commissioning are replaced: stock QEMU has neither a service WLAN nor a
-physical GPIO. QEMU-only modules are compiled from `test/firmware/support`
-and are excluded from CM4/CM5 releases.
-
-The deterministic emulator topology is:
-
-```text
-QEMU Nerves firmware
-├── virtio WAN (fixed MAC and PCI path) -> QEMU user-mode Internet
-└── virtio PLC (different fixed MAC/path) -> isolated/restricted QEMU network
-```
-
-The harness flashes a real fwup disk, boots Nerves over a Unix serial socket,
-provisions roles by MAC-discovered hardware paths, and controls link state via
-QMP. It invokes `Tailscale.Native.load_key_file/1`, not merely application
-startup, to prove that the cross-compiled Rustler NIF loads under Nerves musl.
-The x86 build disables Rust's static musl CRT for the shared NIF and forces
-AWS-LC C objects to be position-independent.
-
-This lane validates firmware packaging, VintageNet, `/data` persistence, stable
-role resolution, supervision, and native loading.
-
-The protected live-tailnet variant transfers a one-use credential over SFTP to
-guest `/tmp`; firmware reads and deletes it, persists non-secret configuration,
-and sends a separate redacted enrollment command. Enrollment therefore
-exercises the real FSM/action/adapter boundary without exposing the key through
-serial history, SSH commands, persistent settings, firmware artifacts, or
-process arguments. A mature
-`tailscaled` CI peer tests the deployed TCP direction through the fixed PLC
-proxy. Physical CM4/CM5 tests remain authoritative for carrier drivers, Wi-Fi
-AP, GPIO, and electrical power-loss behavior.
+- Never persist or publish Tailscale credentials.
+- Never bridge interfaces.
+- Never route, NAT or advertise the PLC subnet.
+- Bind PLC egress to the resolved PLC interface.
+- Open no PLC listener until the PLC role is enabled, resolved and applied.
+- Use `wlan0` only as a WPA2 AP, never as a station.
+- Enable service routing only while IN1 requests the AP.
+- Keep IPv6 forwarding disabled.

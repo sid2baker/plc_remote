@@ -1,17 +1,17 @@
 defmodule PlcRemote.Network.RuntimeTest do
   use ExUnit.Case, async: false
 
-  alias PlcRemote.{Network, Service}
+  alias PlcRemote.Network
 
   test "exposes typed connectivity and supports explicit recovery operations" do
     original = PlcRemote.Configuration.current()
     on_exit(fn -> PlcRemote.Configuration.restore(original) end)
 
-    refute Service.active?()
-    assert eventually?(fn -> PlcRemote.Health.Reporter.service_access() == :inactive end)
+    assert eventually?(&PlcRemote.Service.active?/0)
+    assert eventually?(fn -> PlcRemote.Health.Reporter.service_access() == :active end)
     assert :ok = PlcRemote.Configuration.restore(PlcRemote.Settings.defaults())
     assert :ok = Network.reapply()
-    assert {:error, :internet_uplink_unassigned} = Network.cycle_uplink()
+    assert {:error, :service_mode_active} = Network.cycle_uplink()
 
     status = Network.status()
     assert %PlcRemote.Network.Status{} = status
@@ -29,10 +29,5 @@ defmodule PlcRemote.Network.RuntimeTest do
       Process.sleep(10)
       eventually?(predicate, attempts - 1)
     end
-  end
-
-  setup do
-    if Service.active?(), do: Service.deactivate()
-    :ok
   end
 end

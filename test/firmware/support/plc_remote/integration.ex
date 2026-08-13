@@ -28,16 +28,21 @@ defmodule PlcRemote.Integration do
 
   @spec enroll_invalid_tailnet() :: {:ok, map()} | {:error, term()}
   def enroll_invalid_tailnet do
-    path = "/tmp/plc-remote-invalid-enrollment.json"
+    settings = PlcRemote.Configuration.current()
 
-    with {:ok, encoded} <-
-           Jason.encode(%{
-             "auth_key" => "tskey-auth-invalid-plc-remote-ci",
-             "hostname" => "plc-remote-invalid-ci",
-             "tags" => []
+    with {:ok, candidate} <-
+           PlcRemote.Settings.update(settings, %{
+             "tailscale_enabled" => "true",
+             "tailscale_hostname" => "plc-remote-invalid-ci"
            }),
-         :ok <- File.write(path, encoded, [:binary]) do
-      enroll_tailnet(path)
+         {:ok, enrollment} <-
+           PlcRemote.Tailscale.Enrollment.new("tskey-auth-invalid-plc-remote-ci"),
+         {:error, reason} <- PlcRemote.Tailscale.enroll(enrollment, candidate) do
+      {:ok,
+       %{
+         failed_closed: not PlcRemote.Configuration.current().tailscale.enabled,
+         reason: reason
+       }}
     end
   end
 
@@ -100,14 +105,21 @@ defmodule PlcRemote.Integration do
          {:ok, encoded} <- File.read(payload_path),
          :ok <- File.rm(payload_path),
          {:ok, enrollment} <- decode_enrollment(encoded),
-         {:ok, settings} <-
-           PlcRemote.Configuration.update(%{
+         {:ok, candidate} <-
+           PlcRemote.Settings.update(PlcRemote.Configuration.current(), %{
              "tailscale_enabled" => "true",
              "tailscale_hostname" => enrollment.hostname,
              "tailscale_tags" => Enum.join(enrollment.tags, ",")
            }),
-         :ok <-
-           PlcRemote.Tailscale.enroll(PlcRemote.Tailscale.Enrollment.new(enrollment.auth_key)) do
+         {:ok, credential} <- PlcRemote.Tailscale.Enrollment.new(enrollment.auth_key),
+         {:ok, candidate_identity, _ipv4} <- PlcRemote.Tailscale.enroll(credential, candidate),
+         {:ok, _rollback} <- PlcRemote.Tailscale.commit_enrollment(candidate_identity),
+         {:ok, settings} <-
+           PlcRemote.Configuration.complete_enrollment(%{
+             "tailscale_enabled" => "true",
+             "tailscale_hostname" => enrollment.hostname,
+             "tailscale_tags" => Enum.join(enrollment.tags, ",")
+           }) do
       {:ok,
        %{
          auth_payload_removed: not File.exists?(payload_path),
@@ -129,24 +141,6 @@ defmodule PlcRemote.Integration do
   end
 
   defp connected_tailnet(_status), do: :retry
-
-  @spec await_tailnet_failure(non_neg_integer()) :: {:ok, map()} | {:error, term()}
-  def await_tailnet_failure(timeout_ms \\ 90_000) do
-    await(
-      fn ->
-        status = PlcRemote.Tailscale.status()
-        payload = GenServer.call(PlcRemote.Tailscale.FSM, :state).payload
-
-        if status.lifecycle == :retry_wait and is_nil(status.tailnet_ipv4) and
-             is_nil(payload.listener) do
-          {:ok, %{listener_unavailable: true, state: :retry_wait, tailnet_ipv4: nil}}
-        else
-          :retry
-        end
-      end,
-      timeout_ms
-    )
-  end
 
   @spec record_tailnet_identity() :: {:ok, map()} | {:error, term()}
   def record_tailnet_identity do

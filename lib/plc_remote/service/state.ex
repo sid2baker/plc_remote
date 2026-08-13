@@ -1,7 +1,7 @@
 defmodule PlcRemote.Service.State do
   @moduledoc false
 
-  alias PlcRemote.Service.{GPIOState, Portal, Verification}
+  alias PlcRemote.Service.{GPIOState, Portal}
 
   @enforce_keys [:runtime, :settings]
   defstruct runtime: nil,
@@ -9,9 +9,7 @@ defmodule PlcRemote.Service.State do
             portal: %Portal{},
             gpio: %GPIOState{},
             ssid: nil,
-            expires_at: nil,
-            verification_deadline: nil,
-            verification: %Verification{},
+            routing: :inactive,
             last_error: nil
 
   @type t :: %__MODULE__{
@@ -20,9 +18,7 @@ defmodule PlcRemote.Service.State do
           portal: Portal.t(),
           gpio: GPIOState.t(),
           ssid: String.t() | nil,
-          expires_at: integer() | nil,
-          verification_deadline: integer() | nil,
-          verification: Verification.t(),
+          routing: :inactive | :active | :unavailable,
           last_error: PlcRemote.Error.t() | nil
         }
 
@@ -31,13 +27,11 @@ defmodule PlcRemote.Service.State do
 
     def inspect(state, opts) do
       safe = %{
-        expires_at: state.expires_at,
         gpio_error: state.gpio.error,
         last_error: state.last_error,
         portal_active: is_pid(state.portal.pid),
-        ssid: state.ssid,
-        verification: state.verification,
-        verification_deadline: state.verification_deadline
+        routing: state.routing,
+        ssid: state.ssid
       }
 
       concat(["#PlcRemote.Service.State<", to_doc(safe, opts), ">"])

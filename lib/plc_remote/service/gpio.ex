@@ -1,5 +1,5 @@
 defmodule PlcRemote.Service.GPIO do
-  @moduledoc "Owns recovery GPIO adaptation and primitive GPIO health."
+  @moduledoc "Owns service-switch GPIO adaptation and primitive GPIO health."
 
   require Logger
 
@@ -11,9 +11,22 @@ defmodule PlcRemote.Service.GPIO do
   def open(service_settings) do
     case adapter().open_input(service_settings.gpio_spec) do
       {:ok, handle, reference} ->
-        asserted? = adapter().read(handle) == service_settings.active_level
-        Alarm.clear(ServiceGPIOUnavailable)
-        %GPIOState{handle: handle, subscription_ref: reference, asserted?: asserted?}
+        case adapter().read(handle) do
+          value when value in [0, 1] ->
+            Alarm.clear(ServiceGPIOUnavailable)
+
+            %GPIOState{
+              handle: handle,
+              subscription_ref: reference,
+              asserted?: value == service_settings.active_level
+            }
+
+          {:error, reason} ->
+            close_failed_open(handle, :read, reason)
+
+          reason ->
+            close_failed_open(handle, :read, reason)
+        end
 
       {:error, :not_available_on_host} ->
         error = error(:open, :not_available_on_host)
@@ -44,14 +57,30 @@ defmodule PlcRemote.Service.GPIO do
 
   def update(%GPIOState{} = gpio, _settings, _reference, _value), do: gpio
 
-  @spec asserted?(GPIOState.t()) :: boolean()
-  def asserted?(%GPIOState{handle: nil}), do: false
+  @spec switch_state(GPIOState.t()) :: boolean() | :unknown
+  def switch_state(%GPIOState{handle: nil}), do: :unknown
 
-  def asserted?(%GPIOState{handle: handle} = gpio) do
-    adapter().read(handle)
-    gpio.asserted?
+  def switch_state(%GPIOState{handle: handle} = gpio) do
+    case adapter().read(handle) do
+      value when value in [0, 1] -> gpio.asserted?
+      _error -> :unknown
+    end
   catch
-    _kind, _reason -> false
+    _kind, _reason -> :unknown
+  end
+
+  @spec asserted?(GPIOState.t()) :: boolean()
+  def asserted?(gpio), do: switch_state(gpio) == true
+
+  @spec deasserted?(GPIOState.t()) :: boolean()
+  def deasserted?(gpio), do: switch_state(gpio) == false
+
+  defp close_failed_open(handle, operation, reason) do
+    _result = adapter().close(handle)
+    error = error(operation, reason)
+    Logger.error("Unable to read service GPIO: #{inspect(reason)}")
+    Alarm.set(ServiceGPIOUnavailable, error)
+    %GPIOState{error: error}
   end
 
   defp error(operation, reason) do

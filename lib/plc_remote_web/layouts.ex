@@ -25,14 +25,14 @@ defmodule PlcRemoteWeb.Layouts do
     ~H"""
     <header class="topbar">
       <div>
-        <p class="eyebrow">LOCAL SERVICE MODE</p><h1>PLC Remote</h1>
+        <p class="eyebrow">LOCAL SERVICE ACCESS</p><h1>PLC Remote</h1>
       </div>
       <div class="status-row" aria-label="Gateway status">
-        <span class="status" id="live-status">Live setup</span>
+        <span class="status" id="live-status">Live status</span>
       </div>
     </header>
     <main>{@inner_content}</main>
-    <footer>PLC Remote · local commissioning interface</footer>
+    <footer>PLC Remote · local configuration interface</footer>
     """
   end
 end

@@ -10,30 +10,6 @@ defmodule PlcRemoteWeb.CaptiveController do
 
   @spec exit_service(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def exit_service(conn, _params) do
-    if PlcRemote.Service.status().lifecycle == :automatic do
-      send_resp(conn, 409, "First-boot setup must pass verification before the AP can close.")
-    else
-      Task.start(fn ->
-        Process.sleep(750)
-        PlcRemote.Service.deactivate()
-      end)
-
-      send_resp(conn, 200, closing_page())
-    end
-  end
-
-  defp closing_page do
-    """
-    <!doctype html>
-    <html lang="en">
-      <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width,initial-scale=1">
-        <link rel="stylesheet" href="/assets/js/app.css">
-        <title>Service mode closed</title>
-      </head>
-      <body><main class="closed"><h1>Service mode closed</h1><p>The local service access point is shutting down.</p></main></body>
-    </html>
-    """
+    send_resp(conn, 409, "Service WLAN is controlled only by IPCBOX IN1.")
   end
 end

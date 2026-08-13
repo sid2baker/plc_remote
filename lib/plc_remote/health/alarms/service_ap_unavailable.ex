@@ -1,3 +1,3 @@
 defmodule PlcRemote.Health.Alarms.ServiceAPUnavailable do
-  @moduledoc "Required setup or protected recovery access is unavailable."
+  @moduledoc "The physically requested service WLAN is unavailable."
 end

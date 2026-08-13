@@ -1,213 +1,140 @@
-# PLC Remote field operations
+# Operations
 
-## Cabling
+## Local service access
 
-PLC Remote requires two distinct Ethernet interfaces:
+IPCBOX IN1 directly controls the WPA2 service WLAN:
 
-1. **Internet** — connect to the site router, normally using DHCP.
-2. **PLC LAN** — connect directly to the PLC network after separate provisioning.
+- high: WLAN off;
+- low: WLAN on;
+- unreadable/unavailable: WLAN on.
 
-Do not connect the service Wi-Fi to the Internet. It is an AP-only local
-maintenance interface.
-
-## First boot
-
-1. Power the gateway with the Internet Ethernet cable connected.
-2. Join `PLC-Remote-<serial>`.
-3. Open `http://plc.setup/`.
-4. Select the detected Ethernet port whose link leads to the router.
-5. Save and wait for **Internet connection works**.
-6. Paste a short-lived Tailscale auth key and wait for the tailnet address.
-7. Select **Finish setup**.
-
-Final verification occurs while the AP stays active. Success persists the
-commissioning marker and closes the AP. Failure leaves it active. PLC addressing
-and the PLC-side Ethernet path are not part of this wizard.
-
-A first formatted boot may emit one `erlang-shell-log.siz` `:enoent` warning
-before Nerves mounts `/root`; it should not recur.
-
-## Health checks
-
-From trusted local UART/USB IEx:
+There is a short debounce for contact bounce and no hold duration or timeout.
+Use the cabinet service switch to pull IN1 low. Retrieve the per-device WLAN
+credential through local UART/USB IEx:
 
 ```elixir
+PlcRemote.Configuration.service_credentials()
+```
+
+Then open `http://plc.setup/` or `http://192.168.50.1/`.
+
+When Internet Ethernet is configured, service clients can use it through
+scoped NAT. Traffic to the PLC Ethernet interface is rejected. Check:
+
+```elixir
+PlcRemote.Service.status()
+PlcRemote.Network.status()
 PlcRemote.Diagnostics.snapshot()
-PlcRemote.Diagnostics.explain()
-PlcRemote.Health.active_alarms()
-Alarmist.info()
-RingLogger.grep(~r/network|tailscale|recovery|firmware/i)
 ```
 
-Expected normal roles after full provisioning resemble:
+## Network setup
+
+The portal continuously lists all detected interfaces with driver, MAC,
+hardware path, link state and current addresses.
+
+1. Connect the Internet cable.
+2. Select the linked Ethernet controller.
+3. Keep DHCP unless the site requires static addressing.
+4. If two controllers are detected, enable the PLC role on the other controller.
+5. Enter the gateway-side PLC LAN address and fixed PLC address.
+
+If only one controller appears, Internet can work but isolated PLC access cannot.
+On CM4, confirm that the USB-attached second controller enumerates:
 
 ```elixir
-%{
-  internet_uplink: "eth1",
-  machine_lan: "eth0",
-  service_ap: "wlan0",
-  recovery: "usb0"
-}
+PlcRemote.Network.status().interfaces
 ```
 
-The names may differ; the persisted hardware paths determine identity.
+The CM4 system forces its USB2 controller into host mode and includes RTL815x,
+AX88179, CDC Ethernet/NCM and R8169 drivers. Physical qualification must still
+confirm the actual IPCBOX module and cable path.
 
-## PLC provisioning check
+## Tailscale enrollment
 
-Before enabling the proxy, verify:
+Use a one-use, short-lived auth key. The portal:
 
-- Internet and PLC paths are distinct;
-- the gateway PLC address and PLC target share a subnet;
-- the PLC subnet does not overlap Internet or `192.168.50.0/24`;
-- the PLC role has no gateway or DNS;
-- Tailscale status remains connected after applying the PLC role.
+1. validates the key shape;
+2. tests it against a temporary candidate identity;
+3. requires a tailnet IPv4 address and node identity;
+4. promotes the identity and saves `tailscale.enabled` only after success.
 
-Then test:
+Missing, malformed, rejected and timed-out keys leave saved settings unchanged.
+The field stays available for another attempt. The key itself is never persisted.
+
+Inspect status without exposing credentials:
+
+```elixir
+PlcRemote.Tailscale.status()
+PlcRemote.Health.active_alarms()
+RingLogger.grep(~r/network|tailscale|service|firmware/i)
+```
+
+## PLC path
+
+The deployed path is:
 
 ```text
-technician Tailscale client
-  -> <gateway tailnet IPv4>:102
-  -> configured PLC IPv4:102
+Tailscale peer -> gateway tailnet IPv4:102 -> fixed PLC IPv4:102
 ```
 
-No subnet route is expected or required.
+The listener remains unavailable until a distinct PLC Ethernet role is enabled,
+resolved by stable hardware path, and successfully applied. The PLC interface
+has no gateway or DNS.
 
-## Recovery ladder
-
-For a commissioned gateway with Tailscale enabled:
-
-| Approximate time | Action |
-| --- | --- |
-| Internal | Jittered Tailscale retry, capped at five minutes |
-| 2 minutes | Immediate Tailscale reconnect |
-| 5 minutes | Reapply disable-first Ethernet roles |
-| 15 minutes | Cycle the Internet Ethernet role |
-| 30 minutes | Restart the complete Tailscale FSM/action boundary |
-| 60 minutes | Persist budget and reboot |
-
-At most two consecutive automatic recovery reboots occur by default. The budget
-resets after ten minutes of stable Tailscale access:
+Independent local S7 diagnostics remain available:
 
 ```elixir
-PlcRemote.Recovery.reset_reboot_budget()
+plc = PlcRemote.Configuration.current().machine.plc_address
+{:ok, client} = S7.connect(plc, rack: 0, slot: 2, reconnect: true)
+{:ok, value} = S7.read(client, "DB1.DBW0")
+:ok = S7.close(client)
 ```
 
-Automatic recovery starts only while the derived `RemoteAccessUnavailable`
-alarm is set. Automatic reboot is suppressed when disabled, whenever firmware
-is not explicitly validated, after budget exhaustion, or when the updated
-budget cannot be persisted.
+## Carrier I/O
 
-## IPCBOX panel and service mode
+- IN1 / GPIO23: direct active-low service WLAN switch.
+- IN2 / GPIO24: hold three seconds for one rate-limited Tailscale reconnect.
+- OUT1 / GPIO27: remote PLC path ready.
+- OUT2 / GPIO22: service WLAN active.
+- USER1 / GPIO25: enabled remote access unavailable.
+- USER2 / GPIO26: service GPIO/AP fault.
 
-After commissioning, hold isolated IN1 for three seconds to start the bounded
-WPA2 service AP. IN1 is GPIO23, active-low at the Pi (`PIN16` on CM5). This
-operation only enables `wlan0` AP mode; Wi-Fi station mode remains absent and
-Ethernet role ownership is unchanged.
+OUT1/OUT2 are indications, not safety outputs.
 
-IN2 (GPIO24 / CM5 `PIN18`) requests one Tailscale reconnect after a three-second
-hold and has a 30-second cooldown. It does not reset configuration or reboot.
+## Recovery and OTA
 
-OUT1 indicates that the fixed Tailscale listener and successfully applied PLC
-Ethernet path are both ready. OUT2 indicates an active service AP. USER1 is lit
-for an enabled-but-unavailable remote path; USER2 is lit for a service GPIO/AP
-fault. Inspect the panel read model locally:
+A prolonged remote-access outage escalates through reconnect, network reapply,
+uplink cycle and Tailscale restart before a bounded reboot is considered.
+Service access suppresses disruptive recovery while onsite work is active.
 
-```elixir
-PlcRemote.Panel.status()
-PlcRemote.Diagnostics.snapshot()
-```
+Tentative firmware validates only after service and network observations on a
+new device, or stable tailnet evidence on a configured device. Production OTA
+still requires signing keys and signature-enforcing transport.
 
-OUT1/OUT2 are open-drain indication outputs, not safety outputs. Keep loads
-within Waveshare's stated 150 V cutoff and 500 mA maximum, and engineer external
-flyback suppression, inrush, fusing, and isolation as applicable.
-
-Onsite edits are transactional. They commit only after final Ethernet and
-Tailscale verification. Exit, timeout, failure, process restart, or power loss
-restores the previous snapshot. Delete settings only as an intentional factory
-reset; the next boot returns to the open first-boot AP.
-
-## OTA update procedure
-
-1. Confirm current status:
-
-   ```elixir
-   Nerves.Runtime.firmware_validation_status()
-   PlcRemote.Tailscale.status()
-   ```
-
-2. Record proven remote access:
-
-   ```elixir
-   :ok = PlcRemote.Firmware.prepare_for_update()
-   ```
-
-3. Apply a signed fwup image over signature-enforcing transport.
-4. Allow the alternate slot to boot.
-5. Monitor `PlcRemote.Firmware.status/0`.
-6. Do not install another candidate until it is validated.
-
-A commissioned candidate must hold Tailscale for one minute. If Internet works
-but Tailscale cannot recover for 45 minutes, the candidate reverts. Persisted
-pre-update evidence also permits reversion when the candidate loses all
-Internet. Without that evidence, an external Internet outage leaves the image
-running but unvalidated rather than causing a slot-flipping loop.
-
-Manual local escape hatches:
-
-```elixir
-Nerves.Runtime.firmware_validation_status()
-Nerves.Runtime.validate_firmware()
-Nerves.Runtime.revert()
-```
-
-## Settings compatibility
-
-Schema v4 removes Wi-Fi WAN behavior. Stored Ethernet/automatic configurations
-with an assigned Ethernet path migrate to Ethernet-only mode. A Wi-Fi-only
-commissioned configuration becomes uncommissioned and starts the setup AP so an
-operator can select an Ethernet Internet path.
-
-Keep future migrations readable by the previous A/B slot until candidate
-validation, or add an explicit versioned backup/restore protocol.
-
-## QEMU firmware validation
-
-Install QEMU x86_64, `qemu-img`, and `fwup`, then add the x86 Rust target:
+## Firmware tests
 
 ```sh
-rustup target add x86_64-unknown-linux-musl --toolchain 1.95.0
 mix test.firmware
 ```
 
-The project-wide `mix ci` runs this test after the host quality gates.
-`mix test.firmware` builds and inspects the x86_64 Nerves firmware, flashes a
-disposable disk, boots one Internet NIC and one isolated PLC NIC, and checks:
+This boots real x86_64 Nerves firmware in QEMU and verifies the native NIF,
+VintageNet roles, isolated PLC TCP path, link changes, shutdown and persistence.
+Protected tailnet tests remain manual:
 
-- Nerves, BEAM, and the PLC Remote supervision tree start;
-- both virtio Ethernet interfaces are detected by fixed MAC and hardware path;
-- the WAN receives QEMU DHCP Internet while the PLC side remains isolated;
-- settings and distinct Ethernet roles apply through real VintageNet;
-- `Tailscale.Native.load_key_file/1` executes successfully inside Nerves;
-- QMP can drop and restore the PLC link;
-- the PLC-bound TCP path reaches only the QEMU `/bin/cat` echo endpoint;
-- settings survive a graceful shutdown and restart of the same disk.
+```sh
+mix test.invalid-key
+mix ci.tailnet
+```
 
-Artifacts and serial logs are left in `_build/qemu_test` on failure. These
-tests use no Tailscale secret. GitHub Actions runs the same lane with QEMU TCG
-on pushes and pull requests, uploads emulator logs even after failure, and
-retains successful x86 firmware temporarily.
+## Physical acceptance
 
-The manual `Protected tailnet integration` workflow uses the GitHub environment
-`tailnet-integration`. Configure environment secrets `TS_OAUTH_CLIENT_ID` and
-`TS_OAUTH_SECRET`, plus variable `PLC_REMOTE_TAILNET_TAGS`. Restrict the OAuth
-client to `auth_keys` scope and only the dedicated CI tag. Tailnet policy must
-permit the CI peer tag to reach the gateway CI tag on TCP/102 and nothing else.
-Configure required reviewers on the environment before storing credentials.
+Before deployment, verify on both CM4 and CM5:
 
-That workflow always checks out trusted `main`, mints a one-use 15-minute
-credential, transfers it to guest `/tmp` over SFTP, and deletes it before
-`tailscale-rs` connects. It verifies invalid-key fail-closed behavior, real
-`tailscale-rs` to mature `tailscaled` interoperability, TCP echo through the
-fixed PLC proxy, and identity/address persistence after reboot. Teardown revokes
-the auth key; the gateway is ephemeral and expires automatically. S7 simulation
-remains a subsequent protected stage.
+- both Ethernet controllers and stable hardware paths;
+- actual driver identity and speed;
+- IN1/IN2 polarity and debounce;
+- WPA2 AP enable/disable from the cabinet switch;
+- service-client Internet access and denied PLC-subnet routing;
+- Tailscale candidate failure followed by a successful retry;
+- fixed PLC proxy traffic and real PLC timing;
+- repeated reboot and power-loss behavior.

@@ -21,8 +21,25 @@ defmodule PlcRemote.Tailscale.Runtime do
   @spec status() :: Status.t()
   def status, do: GenServer.call(__MODULE__, :status)
 
-  @spec enroll(Enrollment.t()) :: :ok
-  def enroll(%Enrollment{} = enrollment), do: GenServer.call(__MODULE__, {:enroll, enrollment})
+  @spec enroll(Enrollment.t(), map()) :: {:ok, term(), String.t()} | {:error, term()}
+  def enroll(%Enrollment{} = enrollment, candidate_settings),
+    do: GenServer.call(__MODULE__, {:enroll, enrollment, candidate_settings}, 90_000)
+
+  @spec commit_enrollment(term()) :: {:ok, term()} | {:error, term()}
+  def commit_enrollment(candidate),
+    do: GenServer.call(__MODULE__, {:commit_enrollment, candidate}, 30_000)
+
+  @spec finalize_enrollment(term()) :: :ok | {:error, term()}
+  def finalize_enrollment(rollback),
+    do: GenServer.call(__MODULE__, {:finalize_enrollment, rollback}, 30_000)
+
+  @spec rollback_enrollment(term()) :: :ok | {:error, term()}
+  def rollback_enrollment(rollback),
+    do: GenServer.call(__MODULE__, {:rollback_enrollment, rollback}, 30_000)
+
+  @spec discard_enrollment(term()) :: :ok
+  def discard_enrollment(candidate),
+    do: GenServer.call(__MODULE__, {:discard_enrollment, candidate}, 30_000)
 
   @spec reconnect() :: :ok
   def reconnect, do: GenServer.cast(__MODULE__, :reconnect)
@@ -48,11 +65,29 @@ defmodule PlcRemote.Tailscale.Runtime do
   @impl GenServer
   def handle_call(:status, _from, state), do: {:reply, current_status(), state}
 
-  def handle_call({:enroll, %Enrollment{} = enrollment}, _from, state) do
-    auth_key = Enrollment.consume(enrollment)
-    payload = current_payload()
-    transition(:evaluate, %{payload | pending_auth_key: auth_key, failure_count: 0})
-    {:reply, :ok, reschedule(state)}
+  def handle_call(
+        {:enroll, %Enrollment{} = enrollment, candidate_settings},
+        _from,
+        state
+      ) do
+    reply = validate_enrollment(candidate_settings, Enrollment.consume(enrollment))
+    {:reply, reply, state}
+  end
+
+  def handle_call({:commit_enrollment, candidate}, _from, state) do
+    {:reply, current_payload().adapter.commit_enrollment(candidate), state}
+  end
+
+  def handle_call({:finalize_enrollment, rollback}, _from, state) do
+    {:reply, current_payload().adapter.finalize_enrollment(rollback), state}
+  end
+
+  def handle_call({:rollback_enrollment, rollback}, _from, state) do
+    {:reply, current_payload().adapter.rollback_enrollment(rollback), state}
+  end
+
+  def handle_call({:discard_enrollment, candidate}, _from, state) do
+    {:reply, current_payload().adapter.discard_enrollment(candidate), state}
   end
 
   @impl GenServer
@@ -131,6 +166,29 @@ defmodule PlcRemote.Tailscale.Runtime do
     cancel_timer(state.retry_timer)
     :ok
   end
+
+  defp validate_enrollment(candidate_settings, auth_key) do
+    payload = current_payload()
+
+    if payload.network.connection != :internet do
+      {:error, :internet_unavailable}
+    else
+      case payload.adapter.validate_enrollment(candidate_settings, auth_key) do
+        {:ok, candidate, ipv4} -> {:ok, candidate, format_ip(ipv4)}
+        {:error, reason} -> {:error, sanitize_enrollment_error(reason)}
+      end
+    end
+  catch
+    :exit, _reason -> {:error, :enrollment_service_unavailable}
+  end
+
+  defp sanitize_enrollment_error(:connection_timeout), do: :connection_timeout
+  defp sanitize_enrollment_error(:tailnet_identity_unavailable), do: :authentication_failed
+  defp sanitize_enrollment_error({:error, reason}), do: sanitize_enrollment_error(reason)
+  defp sanitize_enrollment_error(_reason), do: :authentication_failed
+
+  defp format_ip(address) when is_tuple(address), do: address |> :inet.ntoa() |> to_string()
+  defp format_ip(address), do: to_string(address)
 
   defp reschedule(state) do
     PlcRemote.Clock.send_after(self(), :publish_status, 0)

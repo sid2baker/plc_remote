@@ -21,9 +21,10 @@ defmodule PlcRemote.Adapters.Host.Network do
         kind: :ethernet,
         driver: "macb",
         speed_mbps: 1_000,
-        lower_up: false,
-        connection: :disconnected,
-        mac_address: "02:00:00:00:00:10"
+        lower_up: true,
+        connection: :lan,
+        mac_address: "02:00:00:00:00:10",
+        addresses: ["192.168.10.1/24"]
       },
       %{
         ifname: "eth1",
@@ -31,9 +32,10 @@ defmodule PlcRemote.Adapters.Host.Network do
         kind: :ethernet,
         driver: "r8152",
         speed_mbps: 2_500,
-        lower_up: false,
-        connection: :disconnected,
-        mac_address: "02:00:00:00:00:25"
+        lower_up: true,
+        connection: :internet,
+        mac_address: "02:00:00:00:00:25",
+        addresses: ["192.168.1.25/24"]
       },
       %{
         ifname: "wlan0",
@@ -43,7 +45,8 @@ defmodule PlcRemote.Adapters.Host.Network do
         speed_mbps: nil,
         lower_up: false,
         connection: :disconnected,
-        mac_address: "02:00:00:00:00:50"
+        mac_address: "02:00:00:00:00:50",
+        addresses: ["192.168.50.1/24"]
       }
     ]
   end

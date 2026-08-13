@@ -22,17 +22,7 @@ defmodule PlcRemote.SupervisionTest do
            end)
   end
 
-  test "service boundary restores protected AP intent after runtime crash" do
-    original = PlcRemote.Configuration.current()
-
-    on_exit(fn ->
-      if PlcRemote.Service.active?(), do: PlcRemote.Service.deactivate()
-      PlcRemote.Configuration.restore(original)
-    end)
-
-    :ok = PlcRemote.Configuration.restore(%{original | commissioned: true})
-    assert :ok = PlcRemote.Service.activate()
-
+  test "service boundary restores switch-controlled AP after runtime crash" do
     previous_service = Process.whereis(PlcRemote.Service.Runtime)
     previous_web = Process.whereis(PlcRemote.Service.WebSupervisor)
     previous_runtime = Process.whereis(PlcRemote.Service.WebRuntimeSupervisor)
@@ -54,7 +44,7 @@ defmodule PlcRemote.SupervisionTest do
 
              is_pid(service) and is_pid(web) and is_pid(runtime) and service != previous_service and
                web != previous_web and runtime != previous_runtime and not is_nil(status) and
-               status.active and status.lifecycle == :recovery
+               status.active and status.lifecycle == :active
            end)
   end
 

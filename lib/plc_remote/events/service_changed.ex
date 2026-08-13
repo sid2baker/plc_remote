@@ -1,5 +1,5 @@
 defmodule PlcRemote.Events.ServiceChanged do
-  @moduledoc "The local setup/recovery service lifecycle changed."
+  @moduledoc "The local service-switch WLAN lifecycle changed."
 
   @enforce_keys [:status]
   defstruct [:status]

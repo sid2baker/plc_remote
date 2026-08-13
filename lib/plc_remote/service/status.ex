@@ -1,26 +1,18 @@
 defmodule PlcRemote.Service.Status do
-  @moduledoc "Non-secret operational status for setup and protected recovery access."
+  @moduledoc "Operational status for the service-switch controlled WLAN."
 
-  @type lifecycle ::
-          :inactive
-          | :starting_automatic
-          | :automatic
-          | :verifying_automatic
-          | :starting_recovery
-          | :recovery
-          | :verifying_recovery
-          | :fault
+  @type lifecycle :: :inactive | :active | :fault
 
   @enforce_keys [
     :lifecycle,
     :active,
     :address,
-    :expires_in_seconds,
+    :gpio_asserted,
     :gpio_error,
     :gpio_spec,
+    :routing,
     :secured,
-    :ssid,
-    :verification
+    :ssid
   ]
   defstruct @enforce_keys
 
@@ -28,11 +20,11 @@ defmodule PlcRemote.Service.Status do
           lifecycle: lifecycle(),
           active: boolean(),
           address: String.t(),
-          expires_in_seconds: non_neg_integer() | nil,
+          gpio_asserted: boolean() | :unknown,
           gpio_error: PlcRemote.Error.t() | nil,
           gpio_spec: String.t(),
-          secured: boolean(),
-          ssid: String.t() | nil,
-          verification: PlcRemote.Service.Verification.t()
+          routing: :inactive | :active | :unavailable,
+          secured: true,
+          ssid: String.t() | nil
         }
 end

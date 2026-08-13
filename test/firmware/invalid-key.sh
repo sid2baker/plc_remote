@@ -43,14 +43,11 @@ pid=$!
 result="$(elixir "$root/test/support/qemu_cli.exs" console "$console" "$log" \
   'IO.puts(PlcRemote.Integration.result(PlcRemote.Integration.provision_ethernet_roles()))' \
   'IO.puts(PlcRemote.Integration.result(PlcRemote.Integration.await_connection(:internet)))' \
-  'IO.puts(PlcRemote.Integration.result(PlcRemote.Integration.enroll_invalid_tailnet()))' \
-  'IO.puts(PlcRemote.Integration.result(PlcRemote.Integration.await_tailnet_failure()))')"
+  'IO.puts(PlcRemote.Integration.result(PlcRemote.Integration.enroll_invalid_tailnet()))')"
 
 printf '%s\n' "$result"
 printf '%s\n' "$result" | grep -q 'connection: :internet'
-printf '%s\n' "$result" | grep -q 'auth_payload_removed: true'
-printf '%s\n' "$result" | grep -q 'listener_unavailable: true'
-printf '%s\n' "$result" | grep -q 'tailnet_ipv4: nil'
+printf '%s\n' "$result" | grep -q 'failed_closed: true'
 
 echo "Invalid Tailscale key failed closed"
 

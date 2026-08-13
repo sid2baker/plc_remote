@@ -7,6 +7,21 @@ defmodule PlcRemote.TcpProxyTest do
     @behaviour PlcRemote.Adapters.Tailscale
 
     @impl true
+    def validate_enrollment(_settings, _auth_key), do: {:error, :unused}
+
+    @impl true
+    def commit_enrollment(_candidate), do: {:ok, :rollback}
+
+    @impl true
+    def finalize_enrollment(_rollback), do: :ok
+
+    @impl true
+    def rollback_enrollment(_rollback), do: :ok
+
+    @impl true
+    def discard_enrollment(_candidate), do: :ok
+
+    @impl true
     def connect(_settings, _auth_key, _opts), do: {:error, :unused}
 
     @impl true

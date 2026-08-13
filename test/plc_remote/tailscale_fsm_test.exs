@@ -46,12 +46,13 @@ defmodule PlcRemote.Tailscale.FSMTest do
                "tailscale_enabled" => "true"
              })
 
-    :ok = Tailscale.enroll(PlcRemote.Tailscale.Enrollment.new("tskey-auth-test-only"))
+    assert {:ok, enrollment} =
+             PlcRemote.Tailscale.Enrollment.new("tskey-auth-test-only-valid")
 
-    assert eventually?(fn ->
-             status = Tailscale.status()
-             status.lifecycle == :waiting_for_network and status.failure_count == 0
-           end)
+    assert {:error, reason} = Tailscale.enroll(enrollment, Configuration.current())
+    assert reason in [:internet_unavailable, :authentication_failed]
+
+    assert Configuration.current().tailscale.enabled
   end
 
   defp tailscale_payload do

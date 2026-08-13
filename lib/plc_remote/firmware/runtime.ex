@@ -129,23 +129,19 @@ defmodule PlcRemote.Firmware.Runtime do
     :ok
   end
 
+  defp decision(%{settings: %{commissioned: false}} = payload, _now) do
+    health = PlcRemote.Health.snapshot()
+    if payload.network_observed and health.service_access == :active, do: :validate, else: :wait
+  end
+
   defp decision(payload, now) do
-    settings = payload.settings
     health = PlcRemote.Health.snapshot()
 
-    cond do
-      not settings.commissioned and health.service_access == :active ->
-        :validate
-
-      settings.commissioned and not settings.tailscale.enabled and payload.network_observed and
-          health.internet == :available ->
-        :validate
-
-      settings.commissioned ->
-        commissioned_decision(payload, health, now)
-
-      true ->
-        :wait
+    if not payload.settings.tailscale.enabled and payload.network_observed and
+         health.internet == :available do
+      :validate
+    else
+      commissioned_decision(payload, health, now)
     end
   end
 
@@ -218,7 +214,7 @@ defmodule PlcRemote.Firmware.Runtime do
   end
 
   defp validation_reason(%{settings: %{commissioned: false}}),
-    do: "automatic commissioning access is healthy"
+    do: "service WLAN is healthy and network hardware was observed"
 
   defp validation_reason(%{settings: %{tailscale: %{enabled: false}}}),
     do: "Tailscale is intentionally disabled and Ethernet health is available"

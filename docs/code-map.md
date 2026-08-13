@@ -25,7 +25,6 @@ and `TailscaleUnavailable`; no subsystem sets it imperatively.
 | `PlcRemote.Settings` | Defaults, v4 migration, normalization, validation, credential extraction |
 | `PlcRemote.Settings.Store` | Atomic owner-only JSON storage |
 | `PlcRemote.Configuration` | Persistent validated settings ownership and revision publication |
-| `PlcRemote.Configuration.Transaction` | Explicit onsite begin/commit/rollback API |
 | `PlcRemote.Tailscale.Enrollment` | Redacted, transient one-use credential command value |
 
 `ConfigurationChanged` contains only a revision. Consumers read the new
@@ -57,21 +56,21 @@ Network owns `NetworkConfigurationInvalid`, `InternetUnavailable`, and
 | `PlcRemote.Tailscale.Supervisor` | One lifetime for tasks, sessions, runtime, and FSM |
 | `PlcRemote.Proxy.Policy` | Pure fixed-listener interface policy |
 | `PlcRemote.Proxy.TcpProxy` | Bidirectional bytes to one fixed PLC destination |
-| `PlcRemote.Adapters.Target.Tailscale` | Only direct `tailscale-rs` integration |
+| `PlcRemote.Adapters.Target.Tailscale` | Candidate identity validation/promotion and direct `tailscale-rs` integration |
 
 ## Service and web
 
 | Module | Responsibility |
 | --- | --- |
-| `PlcRemote.Service` | Public setup/recovery API |
-| `PlcRemote.Service.FSM` | Inactive, automatic, recovery, verification, and fault lifecycle |
-| `PlcRemote.Service.Runtime` | GPIO/portal/configuration facts and lifecycle timers |
-| `PlcRemote.Service.State` | Grouped portal, GPIO, and verification resources |
-| `PlcRemote.Service.Actions` | AP/web and configuration transaction effects |
+| `PlcRemote.Service` | Public switch-controlled WLAN status/recheck API |
+| `PlcRemote.Service.FSM` | Inactive, active, and fault lifecycle |
+| `PlcRemote.Service.Runtime` | Direct debounced IN1 observation and portal lifecycle |
+| `PlcRemote.Service.State` | Grouped portal, GPIO, and routing resources |
+| `PlcRemote.Service.Actions` | WPA2 AP, web, and routing effects |
+| `PlcRemote.Service.Router` | Scoped `wlan0` → WAN forwarding boundary |
 | `PlcRemote.Service.GPIO` | GPIO adaptation and primitive GPIO alarm |
-| `PlcRemote.Service.Verification` | Pure Health-based final verification |
 | `PlcRemote.Service.Supervisor` | One-for-all Phoenix, Bandit, runtime, and FSM boundary |
-| `PlcRemoteWeb.CommissioningLive` | Typed Service + Health + subsystem read-model presentation |
+| `PlcRemoteWeb.CommissioningLive` | One live detected-device and configuration page |
 
 ## IPCBOX panel
 
@@ -122,16 +121,16 @@ PlcRemote.Supervisor (:rest_for_one)
 2. Identify Ethernet roles by hardware path, never `ethN`.
 3. Internet is Ethernet-only; `wlan0` is AP-only.
 4. Never give the PLC interface a gateway or DNS.
-5. Never bridge, NAT, route the PLC subnet, or enable kernel forwarding.
-6. Never persist, publish, inspect, or render a Tailscale auth key.
-7. Open no PLC listener without an enabled, successfully resolved PLC role.
-8. Keep effect tasks/listeners and their lifecycle in one supervision lifetime.
-9. Keep the first-boot AP until explicit verification succeeds.
-10. Keep onsite changes behind a power-loss-safe rollback transaction.
+5. Never bridge or route/NAT the PLC subnet; service NAT may target only the Internet role.
+6. Enable scoped IPv4 forwarding only while IN1 requests the service AP.
+7. Never persist, publish, inspect, or render a Tailscale auth key.
+8. Open no PLC listener without an enabled, successfully resolved PLC role.
+9. Keep effect tasks/listeners and their lifecycle in one supervision lifetime.
+10. Persist Tailscale enablement only after candidate enrollment succeeds.
 11. Automatically reboot only validated firmware within the persisted budget.
 12. Keep operational status separate from Health alarms.
 13. Treat OUT1/OUT2 as non-safety indication outputs and initialize them off.
-14. Keep IN1 limited to service AP enablement and IN2 limited to reconnect.
+14. Let only confirmed-high IN1 disable service; keep IN2 limited to reconnect.
 
 ## Validation
 

@@ -3,10 +3,9 @@ defmodule PlcRemote.Service.Platform do
 
   alias PlcRemote.Network
 
-  @spec enter_access_point(map(), String.t(), String.t(), :open | :wpa2) ::
-          :ok | {:error, term()}
-  def enter_access_point(service, ssid, regulatory_domain, security) do
-    config = Network.service_access_point_config(service, ssid, regulatory_domain, security)
+  @spec enter_access_point(map(), String.t(), String.t()) :: :ok | {:error, term()}
+  def enter_access_point(service, ssid, regulatory_domain) do
+    config = Network.service_access_point_config(service, ssid, regulatory_domain)
     ifname = Network.interface(:service_ap)
     adapter = network_adapter()
 

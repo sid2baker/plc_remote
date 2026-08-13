@@ -127,9 +127,9 @@ defmodule PlcRemote.Network do
   def internet_uplink_config(ip_config),
     do: %{type: VintageNetEthernet, ipv4: ipv4_config(ip_config)}
 
-  @doc "Builds the isolated service access point and captive DNS configuration."
-  @spec service_access_point_config(map(), String.t(), String.t(), :open | :wpa2) :: map()
-  def service_access_point_config(service, ssid, regulatory_domain, security \\ :wpa2) do
+  @doc "Builds the WPA2 service-router access point and DHCP configuration."
+  @spec service_access_point_config(map(), String.t(), String.t()) :: map()
+  def service_access_point_config(service, ssid, regulatory_domain) do
     address = service.address
     {a, b, c, _d} = parse_ipv4!(address)
 
@@ -137,7 +137,7 @@ defmodule PlcRemote.Network do
       type: VintageNetWiFi,
       vintage_net_wifi: %{
         regulatory_domain: regulatory_domain,
-        networks: [access_point_network(service, ssid, security)]
+        networks: [access_point_network(service, ssid)]
       },
       ipv4: %{method: :static, address: address, prefix_length: service.prefix_length},
       dhcpd: %{
@@ -145,21 +145,17 @@ defmodule PlcRemote.Network do
         end: {a, b, c, 250},
         max_leases: 231,
         options: %{
-          dns: [address],
+          dns: [{1, 1, 1, 1}, {8, 8, 8, 8}],
           router: [address],
           subnet: {255, 255, 255, 0},
           domain: "plc.setup",
           search: ["plc.setup"]
         }
-      },
-      dnsd: %{records: [{"plc.setup", address}, {"*", address}]}
+      }
     }
   end
 
-  defp access_point_network(_service, ssid, :open),
-    do: %{mode: :ap, ssid: ssid, key_mgmt: :none}
-
-  defp access_point_network(service, ssid, :wpa2) do
+  defp access_point_network(service, ssid) do
     %{
       mode: :ap,
       ssid: ssid,

@@ -67,7 +67,6 @@ enable_uart=1
 # dtoverlay=pwm
 
 [cm4]
-# Raspberry Pi CM4-only settings
-
-# For the CM4 I/O board, USB is disabled by default. This enables it.
+# IPCBOX-CM5-A routes its second Ethernet controller over the CM4 USB2 pins.
+# CM4 USB is disabled by default, so force the controller into host mode.
 dtoverlay=dwc2,dr_mode=host

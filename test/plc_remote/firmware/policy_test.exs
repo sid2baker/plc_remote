@@ -10,10 +10,10 @@ defmodule PlcRemote.Firmware.PolicyTest do
     candidate_unreachable_ms: 2_700_000
   ]
 
-  test "uncommissioned firmware validates only after the automatic AP is healthy" do
-    assert Policy.uncommissioned(%{active: true, mode: :automatic}) == :validate
-    assert Policy.uncommissioned(%{active: true, mode: :recovery}) == :wait
-    assert Policy.uncommissioned(%{active: false, mode: nil}) == :wait
+  test "uncommissioned firmware validates after service and network evidence" do
+    assert Policy.uncommissioned(%{active: true, network_observed: true}) == :validate
+    assert Policy.uncommissioned(%{active: true, network_observed: false}) == :wait
+    assert Policy.uncommissioned(%{active: false, network_observed: true}) == :wait
   end
 
   test "commissioned firmware validates after stable tailnet connectivity" do
