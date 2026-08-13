@@ -14,7 +14,7 @@ defmodule PlcRemote.Service.FSMTest do
     assert status.ssid == "PLC-Remote-HOST"
   end
 
-  test "only a confirmed high input disables the service WLAN" do
+  test "only a confirmed non-active GPIO level disables the service WLAN" do
     set_gpio(%PlcRemote.Service.GPIOState{handle: self(), asserted?: false})
     Service.recheck()
     assert eventually?(fn -> not Service.status().active end)

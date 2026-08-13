@@ -1,15 +1,24 @@
 # Operations
 
+> #### IPCBOX-CM5-A module requirement
+>
+> Use a CM5 for complete carrier operation. The board enables its four Type-A
+> USB ports from module pin 111 (`VBUS_EN` on CM5), but CM4 assigns that pin to
+> `VDAC_COMP`. With CM4, the USB keyboard, hub and USB-attached 2.5 Gb Ethernet
+> controller therefore remain unpowered. The CM4 image keeps USB2 in device mode
+> so the carrier's Type-C connector can provide a recovery network instead.
+
 ## Local service access
 
-IPCBOX IN1 directly controls the WPA2 service WLAN:
+IPCBOX IN1 directly controls the WPA2 service WLAN. The carrier's isolated
+input inverts the external terminal level:
 
-- high: WLAN off;
-- low: WLAN on;
-- unreadable/unavailable: WLAN on.
+- terminal high (>2 V, GPIO low): WLAN on;
+- terminal low/open (<0.9 V, GPIO high): WLAN off;
+- unreadable/unavailable GPIO: WLAN on.
 
 There is a short debounce for contact bounce and no hold duration or timeout.
-Use the cabinet service switch to pull IN1 low. Retrieve the per-device WLAN
+Use the cabinet service switch to drive isolated IN1 high. Retrieve the per-device WLAN
 credential through local UART/USB IEx:
 
 ```elixir
@@ -39,15 +48,16 @@ hardware path, link state and current addresses.
 5. Enter the gateway-side PLC LAN address and fixed PLC address.
 
 If only one controller appears, Internet can work but isolated PLC access cannot.
-On CM4, confirm that the USB-attached second controller enumerates:
+Inspect detected interfaces with:
 
 ```elixir
 PlcRemote.Network.status().interfaces
 ```
 
-The CM4 system forces its USB2 controller into host mode and includes RTL815x,
-AX88179, CDC Ethernet/NCM and R8169 drivers. Physical qualification must still
-confirm the actual IPCBOX module and cable path.
+On IPCBOX-CM5-A, use CM5 so `VBUS_EN` powers the Type-A ports and USB-attached
+second Ethernet controller. The CM4 image uses USB2 device mode for Type-C
+recovery; its kernel retains RTL815x, AX88179, CDC Ethernet/NCM and R8169 drivers
+for qualification on other carriers.
 
 ## Tailscale enrollment
 
@@ -92,7 +102,7 @@ plc = PlcRemote.Configuration.current().machine.plc_address
 
 ## Carrier I/O
 
-- IN1 / GPIO23: direct active-low service WLAN switch.
+- IN1 / GPIO23: inverted isolated input; external high enables the service WLAN.
 - IN2 / GPIO24: hold three seconds for one rate-limited Tailscale reconnect.
 - OUT1 / GPIO27: remote PLC path ready.
 - OUT2 / GPIO22: service WLAN active.
@@ -128,9 +138,10 @@ mix ci.tailnet
 
 ## Physical acceptance
 
-Before deployment, verify on both CM4 and CM5:
+Before deployment, verify on CM5-equipped IPCBOX-CM5-A hardware:
 
-- both Ethernet controllers and stable hardware paths;
+- all Type-A USB ports and both Ethernet controllers;
+- both Ethernet controllers' stable hardware paths;
 - actual driver identity and speed;
 - IN1/IN2 polarity and debounce;
 - WPA2 AP enable/disable from the cabinet switch;

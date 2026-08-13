@@ -1,7 +1,13 @@
 # PLC Remote Nerves System for IPCBOX-CM5-A with CM4
 
-This is the Raspberry Pi CM4 Nerves system used by PLC Remote on the
-[Waveshare IPCBOX-CM5-A](https://docs.waveshare.com/IPCBOX-CM5-A).
+This is the Raspberry Pi CM4 Nerves system retained for PLC Remote hardware
+qualification. The [Waveshare IPCBOX-CM5-A](https://docs.waveshare.com/IPCBOX-CM5-A)
+is electrically designed for CM5: its Type-A USB power switches use module pin
+111 (`VBUS_EN` on CM5), while CM4 defines that pin as `VDAC_COMP`. Consequently,
+the carrier's four Type-A ports—including the USB hub and second Ethernet
+controller—are not expected to operate with CM4. The CM4 system therefore keeps
+USB2 in device mode for recovery through the carrier's Type-C connector. Use the
+`rpi5` target and a CM5 for full IPCBOX-CM5-A operation.
 
 It is derived from `nerves-project/nerves_system_rpi4` 2.1.1 and retains its
 CM4 device tree and 64-bit ARM toolchain. The local customization enables the

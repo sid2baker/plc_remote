@@ -3,8 +3,10 @@
 Nerves firmware for simple, fail-closed remote access to one industrial PLC. The
 primary platform is the
 [Waveshare IPCBOX-CM5-A](https://docs.waveshare.com/IPCBOX-CM5-A) populated with
-either a CM4 (`rpi4`) or CM5 (`rpi5`). Both targets use carrier-specific Nerves
-systems.
+a CM5 (`rpi5`). The `rpi4` target remains available for CM4 qualification, but
+the IPCBOX-CM5-A uses module pin 111 as the CM5-only `VBUS_EN` signal. That pin
+is `VDAC_COMP` on CM4, so the carrier's four Type-A USB ports are not powered
+when a CM4 is installed. Use CM5 for complete IPCBOX-CM5-A operation.
 
 PLC Remote has three physical network roles:
 
@@ -46,7 +48,7 @@ not cross the proxy.
 
 ## Configuration
 
-1. Put the cabinet service switch in its active position so IN1 is low.
+1. Put the cabinet service switch in its active position so the isolated IN1 terminal is high.
 2. Join the WPA2 `PLC-Remote-<serial>` WLAN.
 3. Open `http://plc.setup/` or `http://192.168.50.1/`.
 4. Inspect the live list of detected Ethernet controllers and cable state.
@@ -105,11 +107,13 @@ plc = PlcRemote.Configuration.current().machine.plc_address
 
 IPCBOX IN1 directly owns the service AP:
 
-- confirmed high: AP off;
-- low: AP on;
-- unavailable or unreadable: AP on, so local recovery remains possible.
+- isolated terminal high (>2 V, GPIO reads low): AP on;
+- isolated terminal low/open (<0.9 V, GPIO reads high): AP off;
+- unavailable or unreadable GPIO: AP on, so local recovery remains possible.
 
-IN1 is GPIO23 (CM5 label `PIN16`) and active-low after isolation. Input changes
+IN1 is GPIO23 (CM5 label `PIN16`). The carrier isolation inverts the external
+terminal, as documented by Waveshare; the GPIO input is opened without an
+internal pull resistor. Input changes
 are debounced for contact bounce; there is no hold timer or inactivity timeout.
 The service network is `192.168.50.0/24` and uses the per-device WPA2 key.
 

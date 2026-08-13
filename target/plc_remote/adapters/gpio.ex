@@ -5,7 +5,7 @@ defmodule PlcRemote.Adapters.Target.GPIO do
 
   @impl true
   def open_input(gpio_spec) do
-    with {:ok, gpio} <- gpio_call(:open, [gpio_spec, :input]),
+    with {:ok, gpio} <- gpio_call(:open, [gpio_spec, :input, [pull_mode: :none]]),
          {:ok, reference} <- gpio_call(:subscribe, [gpio]) do
       {:ok, gpio, reference}
     end

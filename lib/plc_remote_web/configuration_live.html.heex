@@ -3,8 +3,8 @@
     <p class="eyebrow">PLC REMOTE</p>
     <h2>Gateway status and configuration</h2>
     <p>
-      This page updates automatically. IPCBOX IN1 directly controls this WPA2 service WLAN:
-      low enables it, and only a confirmed high signal disables it.
+      This page updates automatically. Driving the isolated IPCBOX IN1 terminal high enables
+      this WPA2 service WLAN; a low or open terminal disables it.
     </p>
   </div>
   <dl class="facts">
@@ -13,7 +13,11 @@
     </div>
     <div>
       <dt>IN1</dt><dd>
-        {if @service.gpio_asserted == false, do: "High — AP off", else: "Low or unknown — AP on"}
+        {case @service.gpio_asserted do
+          true -> "Terminal high — AP on"
+          false -> "Terminal low/open — AP off"
+          :unknown -> "GPIO unknown — AP on"
+        end}
       </dd>
     </div>
     <div>

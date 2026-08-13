@@ -125,7 +125,7 @@ defmodule PlcRemote.Service.Runtime do
     if lifecycle() != :inactive, do: transition(:disable, nil)
   end
 
-  # Fail open for local service: only a confirmed high signal may disable the AP.
+  # Fail open for local service: only a confirmed non-active GPIO level disables the AP.
   defp desired_state(gpio) do
     if GPIO.deasserted?(gpio), do: :inactive, else: :active
   end

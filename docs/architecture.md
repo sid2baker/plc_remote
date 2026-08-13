@@ -16,23 +16,26 @@ Ethernet roles are persisted by `/devices/...` hardware path. All detected
 Ethernet interfaces are disabled before valid, distinct roles are enabled.
 A missing or duplicate role fails closed.
 
-The IPCBOX second Ethernet controller is USB-attached. CM4 therefore explicitly
-enables its USB2 controller in host mode and includes RTL815x, AX88179, CDC
-Ethernet/NCM and R8169 fallback drivers. If only one controller enumerates, the
-UI reports that Internet can work but isolated PLC access needs a second
-controller; it never invents or assumes `eth1`.
+The IPCBOX second Ethernet controller is USB-attached. Full carrier operation
+requires CM5 because the board powers its Type-A ports from CM5-only `VBUS_EN`
+on module pin 111; CM4 assigns that pin to `VDAC_COMP`. The CM4 IPCBOX image
+keeps USB2 in device mode for Type-C recovery instead. Its kernel retains
+RTL815x, AX88179, CDC Ethernet/NCM and R8169 drivers for qualification on other
+carriers. If only one controller enumerates, the UI reports that Internet can work but isolated PLC
+access needs a second controller; it never invents or assumes `eth1`.
 
 ## Service switch and routing
 
-IPCBOX IN1 is active-low and directly controls the AP after a short debounce:
+IPCBOX IN1 directly controls the AP after a short debounce. The isolated carrier
+input inverts the external terminal level:
 
 ```text
-confirmed high -> AP off
-low            -> AP on
-unreadable     -> AP on
+terminal high (>2 V) -> GPIO low  -> AP on
+terminal low/open     -> GPIO high -> AP off
+GPIO unreadable                    -> AP on
 ```
 
-Only a confirmed high may remove onsite service access. The AP always uses the
+Only a confirmed inactive GPIO level may remove onsite service access. The AP always uses the
 per-device WPA2 key. There is no first-boot open AP, hold timer, inactivity
 timeout, final handoff, or browser-owned lifecycle.
 
@@ -45,7 +48,7 @@ Internet Ethernet -> wlan0             -> RELATED,ESTABLISHED only
 wlan0 -> every other forwarding path   -> REJECT
 ```
 
-The rules and IPv4 forwarding are removed when IN1 goes high. IPv6 forwarding
+The rules and IPv4 forwarding are removed when the isolated IN1 terminal goes low/open. IPv6 forwarding
 remains disabled. No service traffic can route to the PLC Ethernet role.
 
 ## Configuration UI

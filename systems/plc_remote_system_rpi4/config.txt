@@ -53,7 +53,9 @@ disable_overscan=1
 #       this won't work.
 #dtoverlay=w1-gpio-pullup,gpiopin=4
 
-# Support USB gadget mode on the USB-C port
+# Keep the CM4 USB2 controller in OTG/device mode for the IPCBOX Type-C recovery
+# connection. The carrier's Type-A VBUS switches cannot be enabled by CM4 since
+# module pin 111 is VDAC_COMP on CM4 rather than the CM5 VBUS_EN signal.
 dtoverlay=dwc2
 
 # The ramoops overlay works with the pstore driver to preserve crash
@@ -65,8 +67,3 @@ enable_uart=1
 
 # Comment this in or modify to enable PWM
 # dtoverlay=pwm
-
-[cm4]
-# IPCBOX-CM5-A routes its second Ethernet controller over the CM4 USB2 pins.
-# CM4 USB is disabled by default, so force the controller into host mode.
-dtoverlay=dwc2,dr_mode=host
