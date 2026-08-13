@@ -3,24 +3,21 @@ defmodule PlcRemote.Service.Router do
 
   @service_ifname "wlan0"
 
-  @spec enable(PlcRemote.Settings.t()) :: :ok | {:error, term()}
-  def enable(settings) do
-    with {:ok, wan} <- internet_ifname(settings) do
-      platform().enable(@service_ifname, wan, settings.service)
-    end
-  end
-
-  @spec disable() :: :ok | {:error, term()}
-  def disable, do: platform().disable()
-
-  defp internet_ifname(_settings) do
+  @spec enable() :: :ok | {:error, term()}
+  def enable do
     case PlcRemote.Network.status().roles.internet_uplink do
-      ifname when is_binary(ifname) -> {:ok, ifname}
-      _missing -> {:error, :internet_uplink_unavailable}
+      wan_ifname when is_binary(wan_ifname) ->
+        platform().enable(@service_ifname, wan_ifname)
+
+      _missing ->
+        {:error, :internet_uplink_unavailable}
     end
   catch
     :exit, _reason -> {:error, :internet_uplink_unavailable}
   end
+
+  @spec disable() :: :ok | {:error, term()}
+  def disable, do: platform().disable()
 
   defp platform do
     Application.fetch_env!(:plc_remote, :service_router_adapter)

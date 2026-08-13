@@ -21,10 +21,6 @@ defmodule PlcRemote.Configuration do
   @spec current() :: Settings.t()
   def current, do: GenServer.call(__MODULE__, :current)
 
-  @doc false
-  @deprecated "Use current/0"
-  def get, do: current()
-
   @doc "Returns the monotonically increasing in-memory configuration revision."
   @spec revision() :: non_neg_integer()
   def revision, do: GenServer.call(__MODULE__, :revision)

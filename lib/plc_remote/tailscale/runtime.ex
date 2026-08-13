@@ -170,13 +170,13 @@ defmodule PlcRemote.Tailscale.Runtime do
   defp validate_enrollment(candidate_settings, auth_key) do
     payload = current_payload()
 
-    if payload.network.connection != :internet do
-      {:error, :internet_unavailable}
-    else
+    if PlcRemote.Network.status().connection == :internet do
       case payload.adapter.validate_enrollment(candidate_settings, auth_key) do
         {:ok, candidate, ipv4} -> {:ok, candidate, format_ip(ipv4)}
         {:error, reason} -> {:error, sanitize_enrollment_error(reason)}
       end
+    else
+      {:error, :internet_unavailable}
     end
   catch
     :exit, _reason -> {:error, :enrollment_service_unavailable}

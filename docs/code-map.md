@@ -70,7 +70,7 @@ Network owns `NetworkConfigurationInvalid`, `InternetUnavailable`, and
 | `PlcRemote.Service.Router` | Scoped `wlan0` → WAN forwarding boundary |
 | `PlcRemote.Service.GPIO` | GPIO adaptation and primitive GPIO alarm |
 | `PlcRemote.Service.Supervisor` | One-for-all Phoenix, Bandit, runtime, and FSM boundary |
-| `PlcRemoteWeb.CommissioningLive` | One live detected-device and configuration page |
+| `PlcRemoteWeb.ConfigurationLive` | One live detected-device and configuration page |
 
 ## IPCBOX panel
 

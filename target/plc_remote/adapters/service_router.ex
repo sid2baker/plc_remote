@@ -6,7 +6,7 @@ defmodule PlcRemote.Adapters.Target.ServiceRouter do
   @comment "plc-remote-service"
 
   @impl true
-  def enable(service_ifname, wan_ifname, _service) do
+  def enable(service_ifname, wan_ifname) do
     case install_rules(service_ifname, wan_ifname) do
       :ok ->
         write_forwarding("1")

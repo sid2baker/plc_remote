@@ -10,35 +10,41 @@ defmodule PlcRemote.Service.GPIO do
   @spec open(map()) :: GPIOState.t()
   def open(service_settings) do
     case adapter().open_input(service_settings.gpio_spec) do
-      {:ok, handle, reference} ->
-        case adapter().read(handle) do
-          value when value in [0, 1] ->
-            Alarm.clear(ServiceGPIOUnavailable)
+      {:ok, handle, reference} -> open_gpio(handle, reference, service_settings.active_level)
+      {:error, :not_available_on_host} -> unavailable_on_host()
+      {:error, reason} -> open_failed(reason)
+    end
+  end
 
-            %GPIOState{
-              handle: handle,
-              subscription_ref: reference,
-              asserted?: value == service_settings.active_level
-            }
-
-          {:error, reason} ->
-            close_failed_open(handle, :read, reason)
-
-          reason ->
-            close_failed_open(handle, :read, reason)
-        end
-
-      {:error, :not_available_on_host} ->
-        error = error(:open, :not_available_on_host)
+  defp open_gpio(handle, reference, active_level) do
+    case adapter().read(handle) do
+      value when value in [0, 1] ->
         Alarm.clear(ServiceGPIOUnavailable)
-        %GPIOState{error: error}
+
+        %GPIOState{
+          handle: handle,
+          subscription_ref: reference,
+          asserted?: value == active_level
+        }
 
       {:error, reason} ->
-        error = error(:open, reason)
-        Logger.error("Unable to monitor service GPIO: #{inspect(reason)}")
-        Alarm.set(ServiceGPIOUnavailable, error)
-        %GPIOState{error: error}
+        close_failed_open(handle, :read, reason)
+
+      reason ->
+        close_failed_open(handle, :read, reason)
     end
+  end
+
+  defp unavailable_on_host do
+    Alarm.clear(ServiceGPIOUnavailable)
+    %GPIOState{error: error(:open, :not_available_on_host)}
+  end
+
+  defp open_failed(reason) do
+    error = error(:open, reason)
+    Logger.error("Unable to monitor service GPIO: #{inspect(reason)}")
+    Alarm.set(ServiceGPIOUnavailable, error)
+    %GPIOState{error: error}
   end
 
   @spec close(GPIOState.t()) :: :ok

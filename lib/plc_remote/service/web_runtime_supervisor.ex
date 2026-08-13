@@ -2,7 +2,7 @@ defmodule PlcRemote.Service.WebRuntimeSupervisor do
   @moduledoc """
   Starts Phoenix's PubSub and endpoint runtime without opening a listener.
 
-  The service-mode boundary starts Bandit only after the AP address exists.
+  The local service boundary starts Bandit only after the AP address exists.
   Delaying endpoint initialization until Configuration is available also gives
   every unit a unique signing secret without embedding one in public firmware.
   """

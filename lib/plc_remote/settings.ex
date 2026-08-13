@@ -371,7 +371,7 @@ defmodule PlcRemote.Settings do
         errors,
         configured_networks,
         settings.service,
-        "service-mode network"
+        "local service network"
       )
 
     if settings.machine.enabled do

@@ -11,7 +11,7 @@ defmodule PlcRemoteWeb.RouterTest do
 
   @endpoint Endpoint
 
-  test "renders one live device page without the commissioning wizard" do
+  test "renders one live configuration page" do
     {:ok, view, html} = live(build_conn(), "/")
     service = Configuration.current().service
 
@@ -160,6 +160,11 @@ defmodule PlcRemoteWeb.RouterTest do
     conn = get(build_conn(), "/generate_204")
     assert conn.status == 302
     assert get_resp_header(conn, "location") == ["http://plc.setup/"]
+  end
+
+  test "does not expose a browser command that can disable service access" do
+    conn = post(build_conn(), "/service/exit")
+    assert conn.status == 404
   end
 
   setup do

@@ -179,7 +179,7 @@ defmodule PlcRemote.SettingsTest do
     refute Map.has_key?(migrated.uplink, :wifi)
   end
 
-  test "forces commissioned Wi-Fi-only settings back through commissioning" do
+  test "forces legacy Wi-Fi-only settings back to unconfigured Ethernet" do
     legacy =
       Settings.defaults(service_psk: "commissioning-key")
       |> Map.put(:version, 3)
@@ -192,7 +192,7 @@ defmodule PlcRemote.SettingsTest do
     assert migrated.uplink.mode == :disabled
   end
 
-  test "persists a completed commissioning marker" do
+  test "persists a completed enrollment marker" do
     settings =
       Settings.defaults(service_psk: "commissioning-key")
       |> Map.put(:commissioned, true)
@@ -288,7 +288,7 @@ defmodule PlcRemote.SettingsTest do
                "plc_address" => "192.168.50.30"
              })
 
-    assert errors["machine_address"] == "subnet overlaps the service-mode network"
+    assert errors["machine_address"] == "subnet overlaps the local service network"
   end
 
   test "rejects a static Internet uplink that overlaps the machine LAN" do

@@ -29,7 +29,7 @@ defmodule PlcRemote.Service.Actions do
     case start_web_server(PlcRemote.Service.Platform.web_bind(settings.service)) do
       {:ok, portal_pid} ->
         monitor_ref = Process.monitor(portal_pid)
-        routing = enable_routing(settings)
+        routing = enable_routing()
 
         Logger.info(
           "Service WLAN active on #{inspect(ssid)} at http://#{settings.service.address}/"
@@ -90,8 +90,8 @@ defmodule PlcRemote.Service.Actions do
 
   defp stop_portal(_portal), do: :ok
 
-  defp enable_routing(settings) do
-    case PlcRemote.Service.Router.enable(settings) do
+  defp enable_routing do
+    case PlcRemote.Service.Router.enable() do
       :ok ->
         :active
 

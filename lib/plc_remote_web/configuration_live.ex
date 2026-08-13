@@ -1,4 +1,4 @@
-defmodule PlcRemoteWeb.CommissioningLive do
+defmodule PlcRemoteWeb.ConfigurationLive do
   use PlcRemoteWeb, :live_view
 
   alias PlcRemote.{Configuration, Network, Service, Settings, Tailscale}

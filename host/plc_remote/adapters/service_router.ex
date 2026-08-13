@@ -4,7 +4,7 @@ defmodule PlcRemote.Adapters.Host.ServiceRouter do
   @behaviour PlcRemote.Adapters.ServiceRouter
 
   @impl true
-  def enable(_service_ifname, _wan_ifname, _service), do: :ok
+  def enable(_service_ifname, _wan_ifname), do: :ok
 
   @impl true
   def disable, do: :ok

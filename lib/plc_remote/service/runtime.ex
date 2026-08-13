@@ -65,7 +65,7 @@ defmodule PlcRemote.Service.Runtime do
   def handle_info(%NetworkChanged{}, state) do
     if lifecycle() == :active do
       payload = current_payload()
-      routing = routing_status(PlcRemote.Service.Router.enable(payload.settings))
+      routing = routing_status(PlcRemote.Service.Router.enable())
       transition(:refresh, %{payload | routing: routing})
     end
 

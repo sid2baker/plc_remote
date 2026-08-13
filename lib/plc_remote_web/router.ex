@@ -12,13 +12,12 @@ defmodule PlcRemoteWeb.Router do
   scope "/", PlcRemoteWeb do
     pipe_through :browser
 
-    live "/", CommissioningLive, :index
+    live "/", ConfigurationLive, :index
     get "/generate_204", CaptiveController, :redirect
     get "/gen_204", CaptiveController, :redirect
     get "/hotspot-detect.html", CaptiveController, :redirect
     get "/ncsi.txt", CaptiveController, :redirect
     get "/connecttest.txt", CaptiveController, :redirect
-    post "/service/exit", CaptiveController, :exit_service
     get "/*path", CaptiveController, :redirect
   end
 end

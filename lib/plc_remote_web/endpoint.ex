@@ -4,7 +4,7 @@ defmodule PlcRemoteWeb.Endpoint do
   @session_options [
     store: :cookie,
     key: "_plc_remote_service",
-    signing_salt: "service-mode-v2",
+    signing_salt: "local-access-v2",
     same_site: "Strict",
     http_only: true,
     secure: false,

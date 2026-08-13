@@ -7,9 +7,4 @@ defmodule PlcRemoteWeb.CaptiveController do
     |> put_resp_header("location", "http://plc.setup/")
     |> send_resp(302, "")
   end
-
-  @spec exit_service(Plug.Conn.t(), map()) :: Plug.Conn.t()
-  def exit_service(conn, _params) do
-    send_resp(conn, 409, "Service WLAN is controlled only by IPCBOX IN1.")
-  end
 end

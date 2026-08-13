@@ -6,9 +6,6 @@ defmodule PlcRemoteWeb do
       use Phoenix.LiveView, layout: {PlcRemoteWeb.Layouts, :app}
 
       import PlcRemoteWeb.CoreComponents
-      alias Phoenix.LiveView.JS
-
-      unquote(html_helpers())
     end
   end
 
@@ -23,14 +20,6 @@ defmodule PlcRemoteWeb do
     quote do
       use Phoenix.Component
       import PlcRemoteWeb.CoreComponents
-      unquote(html_helpers())
-    end
-  end
-
-  defp html_helpers do
-    quote do
-      import Phoenix.HTML
-      alias PlcRemoteWeb.Router.Helpers, as: Routes
     end
   end
 

@@ -48,6 +48,7 @@ result="$(elixir "$root/test/support/qemu_cli.exs" console "$console" "$log" \
 printf '%s\n' "$result"
 printf '%s\n' "$result" | grep -q 'connection: :internet'
 printf '%s\n' "$result" | grep -q 'failed_closed: true'
+printf '%s\n' "$result" | grep -q 'reason: :authentication_failed'
 
 echo "Invalid Tailscale key failed closed"
 

@@ -135,8 +135,8 @@ config :nerves_ssh,
 #
 #   * eth0/eth1 - disabled until stable hardware paths are assigned to the
 #                 isolated PLC LAN and Ethernet Internet roles
-#   * wlan0     - setup/recovery access point only; never an Internet uplink
-#   * usb0      - local recovery/commissioning connection
+#   * wlan0     - local service access point only; never an Internet uplink
+#   * usb0      - local recovery connection
 #
 # Both Ethernet ports fail closed so kernel enumeration cannot swap the PLC and
 # Internet roles. PlcRemote.Network.Runtime resolves persisted hardware paths on
