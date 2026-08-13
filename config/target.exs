@@ -7,10 +7,10 @@ import Config
     %{
       rpi4:
         {"aarch64-unknown-linux-gnu", "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER",
-         "aarch64-nerves-linux-gnu-gcc", "GPIO23", "ttyS0"},
+         "aarch64-nerves-linux-gnu-gcc", "GPIO23", "tty1"},
       rpi5:
         {"aarch64-unknown-linux-gnu", "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER",
-         "aarch64-nerves-linux-gnu-gcc", "PIN16", "ttyAMA10"},
+         "aarch64-nerves-linux-gnu-gcc", "PIN16", "tty1"},
       x86_64:
         {"x86_64-unknown-linux-musl", "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER",
          "x86_64-nerves-linux-musl-gcc", "emulated", "ttyS0"}
